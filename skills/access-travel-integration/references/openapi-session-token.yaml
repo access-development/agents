@@ -1,0 +1,129 @@
+openapi: "3.0.0"
+info:
+  title: Access Authentication Provider — Session Token (Client Subset)
+  description: |
+    Client-facing subset of the Access Authentication Provider API.
+    Use this endpoint to obtain short-lived, single-use session tokens
+    for initializing the Travel Client SDK.
+  version: "1.0.0"
+  contact:
+    name: Access Development API Support
+
+servers:
+  - url: https://auth.adcrws.com/api/v1
+    description: Production
+  - url: https://auth.adcrws-stage.com/api/v1
+    description: Staging
+
+paths:
+  /tokens:
+    post:
+      summary: Issue a session token
+      description: |
+        Generates a single-use, short-lived session token for a specific member.
+        The token is used to initialize the Travel Client SDK in the browser.
+
+        - Token expires after 5 minutes if unused
+        - Token is invalidated after first use
+        - Each SDK initialization requires a fresh token
+      operationId: issueSessionToken
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+            example:
+              member_key: "user-12345"
+              scope: "travel"
+              first_name: "Jane"
+              last_name: "Doe"
+              email: "jane.doe@example.com"
+      responses:
+        "200":
+          description: Session token issued successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+              example:
+                session_token: "ACCESS_SESSION_a1B2c3D4e5F6g7H8i9J0kLmNoPqRsTuV"
+        "400":
+          description: Validation error — missing or invalid fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid or expired API key, insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited (default 200 requests/minute/key)
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: integer
+        "500":
+          description: Upstream service failure
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API key issued by Access Development
+
+  schemas:
+    TokenRequest:
+      type: object
+      required:
+        - member_key
+        - scope
+      properties:
+        member_key:
+          type: string
+          pattern: "^[a-zA-Z0-9\\-_]{1,255}$"
+          description: Unique identifier for the end-user in your system
+          example: "user-12345"
+        scope:
+          type: string
+          enum: [travel, offer, deals]
+          description: Set to "travel" for the Travel Platform
+          example: "travel"
+        first_name:
+          type: string
+          maxLength: 255
+          description: End-user's first name (optional, used for member record)
+        last_name:
+          type: string
+          maxLength: 255
+          description: End-user's last name (optional)
+        email:
+          type: string
+          format: email
+          description: End-user's email (optional)
+        click_id:
+          type: string
+          pattern: "^[a-zA-Z0-9]+$"
+          description: Affiliate/partner tracking ID (optional)
+
+    TokenResponse:
+      type: object
+      properties:
+        session_token:
+          type: string
+          description: Single-use session token for SDK initialization
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string

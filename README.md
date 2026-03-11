@@ -12,7 +12,7 @@ Ready-to-use AI agent skills that teach coding assistants how to work with Acces
 
 ## Installation
 
-The easiest way to install is with the [`skills` CLI](https://github.com/vercel-labs/sdk/tree/main/packages/skills), which auto-detects your installed agents:
+The easiest way to install is with the `skills` CLI:
 
 ```bash
 npx skills add access-development/agents

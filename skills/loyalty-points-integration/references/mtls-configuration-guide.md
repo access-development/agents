@@ -7,15 +7,15 @@ This guide covers configuring mutual TLS (mTLS) for the Access Loyalty Points AP
 > **The Access caller negotiates TLS 1.3 only and will not fall back to TLS 1.2.** Whichever platform you choose below, confirm that its TLS policy permits 1.3. A policy that caps at TLS 1.2 produces an endpoint Access cannot connect to, and your own `curl` tests will not catch it because they will happily negotiate 1.2.
 >
 > Verify explicitly, on every platform:
->
-> ```bash
-> curl -v --tlsv1.3 --tls-max 1.3 \
->   --cert access-client.crt --key access-client.key \
->   --cacert your-server-ca.crt \
->   "https://your-api.example.com/api/v1/loyalty/balance?member_key=abc123" \
->   -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
-> ```
->
+
+```bash
+curl -v --tlsv1.3 --tls-max 1.3 \
+  --cert access-client.crt --key access-client.key \
+  --cacert your-server-ca.crt \
+  "https://your-api.example.com/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+```
+
 > The OpenAPI spec's security scheme says "TLS 1.2+". That is a floor for protocol hygiene, not a statement that 1.2 suffices for interoperability with Access.
 
 ## Table of Contents

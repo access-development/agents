@@ -226,11 +226,11 @@ Redemptions define **no 404**. `HOLD_NOT_FOUND` is returned as **409** here, unl
 > **Important: do not hard-fail on missing body fields.**
 >
 > The spec marks `member_key`, `points_to_redeem`, and `transaction_details` as required, but Access does not currently populate them on every redemption. Some requests arrive carrying only `hold_id`:
->
-> ```json
-> { "hold_id": "hold-12345" }
-> ```
->
+
+```json
+{ "hold_id": "hold-12345" }
+```
+
 > If you reject these with 400 `INVALID_REQUEST`, redemptions will fail in production even though your implementation matches the written contract.
 >
 > **Resolve what you need from the stored hold instead.** You created the hold, so you already hold the authoritative `member_key` and points amount. Treat the body fields as confirmatory when present and as absent-but-recoverable when not:

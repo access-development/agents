@@ -72,7 +72,7 @@ curl -v --tlsv1.3 --tls-max 1.3 \
   -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
 ```
 
-> The OpenAPI spec's security scheme says "TLS 1.2+". That is a floor for protocol hygiene, not a statement that 1.2 suffices for interoperability with Access.
+> The OpenAPI spec's security scheme requires TLS 1.3. Access will not fall back to TLS 1.2.
 
 ## Table of Contents
 

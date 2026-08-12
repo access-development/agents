@@ -122,7 +122,7 @@ These apply to whichever hop terminates the public hostname:
 - **Missing or untrusted cert rejected** before business logic.
 - **CN / SAN checks** where the platform supports them, using the values the Implementation Manager sends. Do not invent those values.
 
-The OpenAPI security scheme says "TLS 1.2+". That is the floor for cipher and protocol hygiene, not a statement that 1.2 is sufficient for interoperability.
+The OpenAPI security scheme requires TLS 1.3. Access will not fall back to TLS 1.2.
 
 ```bash
 # Must succeed against the public hostname. If this fails, Access cannot reach you.
@@ -201,7 +201,7 @@ All endpoints are under `/v1/loyalty/`. Full schemas, examples, and error codes 
 
 ### The program-key header
 
-**Access does not currently send `program-key`.** It is documented here because it is planned for clients that run multiple loyalty programs on one API server, so that those clients can design for it now. Until it ships:
+**Access does not currently send `program-key`.** Shipping it is tracked by PD-7890 and PD-7891. It is documented here so multi-program clients can design for it. Until those tickets are in production:
 
 - **Do not require it.** Rejecting a request that omits `program-key` will break every call Access makes today.
 - **Read it if present, otherwise fall back** to your single configured program.

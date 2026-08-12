@@ -1,12 +1,9 @@
-# Source of truth: burn-specifications/openapi.yaml
-# Synced from commit db2eca7 ("PD-7685: Refine loyalty API OpenAPI spec descriptions
-# and schemas", 2026-06-04).
+# Canonical source of truth for the Access Loyalty Points API.
+# Other copies (burn-specifications, client-documentation) must point here and
+# must not diverge from this file.
 #
-# This copy differs from canonical in exactly one respect: it documents the `program-key`
-# header on the balance and holds operations. That header is not yet in the canonical spec
-# and is not yet sent by Access. See the "Program Key" note in the description below.
-#
-# When re-syncing, diff against canonical and preserve only the program-key additions.
+# program-key is documented on balance and holds. Access does not send it until
+# PD-7890 and PD-7891 are shipped. Servers must not require it until then.
 openapi: 3.0.0
 info:
   title: Access Loyalty Points API
@@ -14,7 +11,7 @@ info:
   description: |
     This OpenAPI specification defines the RESTful API endpoints that clients must expose on their servers to enable loyalty points redemption integration with the Access Travel Platform.
 
-    The API allows Access to perform operations such as retrieving member points balances, creating holds on points, redeeming points for transactions, refunding points, and canceling holds. All endpoints are secured via mutual TLS (mTLS) for authentication and encryption. Clients are responsible for validating Access's client certificate at their ingress (e.g., API gateway or load balancer) before requests reach the application logic.
+    The API allows Access to perform operations such as retrieving member points balances, creating holds on points, redeeming points for transactions, refunding points, and canceling holds. All endpoints are secured via mutual TLS (mTLS) for authentication and encryption. The hop that terminates the public hostname (cloud load balancer, reverse proxy, or the application if it is that hop) must validate Access's client certificate.
 
     Key principles:
     - **Idempotency**: Mutating operations (POST) require an `Idempotency-Key` header chosen by Access per logical operation and reused unchanged across any retries of that same operation. Clients must store keys and return the cached response for any retry that matches a previously processed key. This follows the [Stripe idempotency convention](https://docs.stripe.com/api/idempotent_requests).
@@ -30,11 +27,11 @@ info:
       - A client operates multiple brands or divisions that are billed independently by Access
       - A single API server handles loyalty points for multiple Access programs
 
-      **Access does not currently send this header.** Your server MUST NOT require it and MUST NOT reject a request that omits it. Treat it as forward-looking: read it if present, fall back to your single configured program if absent. Confirm with your Access Implementation Manager before building any behavior that depends on it.
+      **Access does not currently send this header.** Shipping it is tracked by PD-7890 and PD-7891. Until those are in production, your server MUST NOT require it and MUST NOT reject a request that omits it. Read it if present; otherwise fall back to your single configured program. Confirm with your Access Implementation Manager before building any behavior that depends on it.
 
     This specification is designed to be used for generating server stubs in various languages or for manual implementation. The Access Loyalty Points SDK abstracts much of this, but clients can opt to build directly from this spec.
 
-    **Security Note**: mTLS is mandatory. Configure your server to require and verify client certificates signed by the trusted CA provided by Access, including validation of subject name (e.g., CN=accessdevelopment.com) and SAN (e.g., DNS:api.accessdevelopment.com). Refer to RFC 5246 for TLS best practices and RFC 6125 for certificate validation. To obtain CN/SAN details, coordinate with your Access Integration Manager during setup; they will provide the certificate details for validation.
+    **Security Note**: mTLS is mandatory. The hop that terminates the public hostname must require TLS 1.3 and verify client certificates signed by the trusted CA provided by Access, including validation of subject name (e.g., CN=accessdevelopment.com) and SAN (e.g., DNS:api.accessdevelopment.com). Access will not fall back to TLS 1.2. Refer to RFC 8446 for TLS 1.3 and RFC 6125 for certificate validation. To obtain CN/SAN details, coordinate with your Access Integration Manager during setup; they will provide the certificate details for validation.
 servers:
   - url: https://{client-domain}/api
     description: Client's API base URL (replace {client-domain} with your actual domain)
@@ -64,8 +61,9 @@ paths:
             maintain multiple program instances with Access (e.g., different subscription tiers
             or brands billed independently). Not needed for single-program clients.
 
-            NOT CURRENTLY SENT BY ACCESS. Do not require it and do not reject requests that
-            omit it. Read it if present; otherwise fall back to your single configured program.
+            NOT CURRENTLY SENT BY ACCESS (tracked by PD-7890 and PD-7891). Do not require
+            it and do not reject requests that omit it. Read it if present; otherwise fall
+            back to your single configured program.
         - name: X-Request-ID
           in: header
           required: false
@@ -164,8 +162,9 @@ paths:
             maintain multiple program instances with Access (e.g., different subscription tiers
             or brands billed independently). Not needed for single-program clients.
 
-            NOT CURRENTLY SENT BY ACCESS. Do not require it and do not reject requests that
-            omit it. Read it if present; otherwise fall back to your single configured program.
+            NOT CURRENTLY SENT BY ACCESS (tracked by PD-7890 and PD-7891). Do not require
+            it and do not reject requests that omit it. Read it if present; otherwise fall
+            back to your single configured program.
         - name: X-Request-ID
           in: header
           required: false
@@ -578,7 +577,7 @@ components:
   securitySchemes:
     mtls:
       type: mutualTLS
-      description: Mutual TLS authentication. Client must present a valid certificate signed by the trusted CA provided by Access, and the server verifies subject (e.g., CN=accessdevelopment.com) and SAN (e.g., DNS:api.accessdevelopment.com). Follow RFC 6125 for identity verification and ensure TLS 1.2+ with strong ciphers.
+      description: Mutual TLS authentication. Client must present a valid certificate signed by the trusted CA provided by Access. The hop that terminates the public hostname verifies the certificate, including subject (e.g., CN=accessdevelopment.com) and SAN (e.g., DNS:api.accessdevelopment.com). TLS 1.3 is required. Access will not fall back to TLS 1.2. Follow RFC 6125 for identity verification.
   schemas:
     BalanceResponse:
       type: object

@@ -375,7 +375,7 @@ Releases a hold without redeeming. Points were only reserved, never deducted. No
 
 ## program-key
 
-> **Access does not currently send `program-key`.** It is documented here as planned behavior so multi-program clients can design for it. Your server must not require it, and must not reject a request that omits it.
+> **Access does not currently send `program-key`.** Shipping it is tracked by PD-7890 and PD-7891. It is documented here as planned behavior so multi-program clients can design for it. Your server must not require it, and must not reject a request that omits it.
 
 The header is planned for the **balance** and **holds** endpoints only. It is not planned for redemption, refund, or cancel, because those reference existing holds or transactions that already encode the program context.
 

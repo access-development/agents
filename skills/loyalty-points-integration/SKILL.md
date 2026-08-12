@@ -226,7 +226,7 @@ All errors use a standard JSON body:
 }
 ```
 
-The HTTP status depends on the operation, because each operation defines its own set of responses. Use this table, not a single global mapping:
+The HTTP status depends on the operation, because each operation defines its own set of responses. Use this table, not a single global mapping. Access treats any 4xx as a failed call and does not retry, so a wrong 4xx (for example 404 on redeem) will not be retried, but you should still return the status the operation declares so your implementation matches the contract.
 
 | `error_code` | HTTP Status | Operations | When to use |
 |---|---|---|---|
@@ -296,7 +296,7 @@ Access enforces a strict timeout on every call. Your endpoints must answer well 
 |---|---|
 | Connect / read / write timeout | **5 seconds each** |
 | Attempts per logical operation | **3** (1 initial + 2 retries) |
-| Backoff between attempts | 500ms, then 1000ms |
+| Backoff between attempts | 500ms, then 1000ms, then 2000ms |
 | Retried | 5xx responses and connection/IO failures |
 | **Not** retried | **All 4xx responses** |
 | Circuit breaker | Opens after 5 consecutive failed calls, stays open 30 seconds |
@@ -390,7 +390,7 @@ Before production launch, confirm:
 2. Follow section 3 for all mTLS work: one numbered question per turn, no structured-option tool, no keystore unless Q1 is scenario 1, no invented trust header.
 3. Implement the five endpoints without waiting on Q1. If Q1 is unanswered, emit the Network-team brief from the mTLS guide and continue with business logic.
 4. Load only the matching section of `references/mtls-configuration-guide.md` after Q1.
-5. Do not require `program-key`. Redemptions may arrive with only `hold_id`; resolve the rest from the stored hold.
+5. Do not require `program-key`. Access sends the full RedeemRequest; if a confirmatory field is omitted, resolve it from the stored hold rather than returning 400.
 
 ---
 

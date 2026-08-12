@@ -9,7 +9,7 @@ This guide covers test scenarios, curl commands, common issues, and a go-live va
 ### Prerequisites
 
 - Access client certificate (`access-client.crt`) and private key (`access-client.key`) - what you present to your own server to simulate Access
-- Access CA certificate (`access-ca.pem`) - the CA that signs Access's client certificate. This belongs in **your server's truststore** so your ingress can validate incoming client certs. You do not pass it to curl.
+- Access CA certificate (`access-ca.pem`) - the CA that signs Access's client certificate. This belongs in the **truststore of the hop that terminates the public hostname** so that hop can validate incoming client certs. You do not pass it to curl.
 - Your server CA certificate (`your-server-ca.crt`) - for curl to validate your server, passed as `--cacert`
 - Test `member_key` values provided by Access (e.g., `abc123`)
 - Your base URL (e.g., `https://loyalty.yourdomain.com/api`)
@@ -284,7 +284,7 @@ curl -v \
 
 ### 12. TLS 1.3 Negotiation
 
-Access negotiates TLS 1.3 only. Verify your ingress supports it:
+Access negotiates TLS 1.3 only. Verify the hop that terminates the public hostname supports it. Run tests 10–12 against that hostname, not against the app behind it:
 
 ```bash
 curl -v --tlsv1.3 --tls-max 1.3 \
@@ -297,7 +297,7 @@ curl -v --tlsv1.3 --tls-max 1.3 \
 
 **Expected**: 200 with a balance payload, and `SSL connection using TLSv1.3` in the verbose output.
 
-If this fails while test 1 passes, your ingress is capping at TLS 1.2. **Access will not be able to reach you**, even though every other test in this document passes. Fix the TLS policy before go-live. See the TLS 1.3 callout in `mtls-configuration-guide.md`.
+If this fails while test 1 passes, the public hostname is capping at TLS 1.2. **Access will not be able to reach you**, even though every other test in this document passes. Fix the TLS policy on the validating hop before go-live. See the TLS 1.3 callout in `mtls-configuration-guide.md`.
 
 ---
 
@@ -369,7 +369,7 @@ Or better: deduct points from `available_points` at hold time and restore on can
 **Fix**:
 - **Java/Jackson**: `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)` or global config `spring.jackson.property-naming-strategy=SNAKE_CASE`
 - **Node.js**: Use a snake_case conversion library or manually map field names
-- **Python/FastAPI**: Pydantic supports `alias_generator` for snake_case: `model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)` (or just use snake_case natively since Python prefers it)
+- **Python/FastAPI**: Keep Pydantic field names in snake_case and do not set `alias_generator`. `to_camel` would emit camelCase JSON, which is the bug this section is about. Python field names already match the contract.
 
 ### USD values returned as numbers instead of strings
 
@@ -383,14 +383,15 @@ Or better: deduct points from `available_points` at hold time and restore on can
 
 ### mTLS
 
-- [ ] Access client certificate installed and valid
-- [ ] Trust store contains the complete Access CA chain (intermediate + root)
-- [ ] mTLS handshake succeeds with Access client cert
-- [ ] **TLS 1.3 negotiates successfully** (test 12). Access will not fall back to TLS 1.2.
+- [ ] mTLS is enforced at the hop that terminates the public hostname (cloud LB, reverse proxy, or the app if it is that hop)
+- [ ] Trust store on that hop contains the complete Access CA chain (intermediate + root)
+- [ ] mTLS handshake succeeds with Access client cert against the public hostname
+- [ ] **TLS 1.3 negotiates successfully** (test 12, against the public hostname). Access will not fall back to TLS 1.2.
 - [ ] Requests without client cert are rejected (test 10, run with `--cacert`)
 - [ ] Requests with invalid client cert are rejected (test 11, run with `--cacert`)
+- [ ] The app does not invent or require an Access-defined trust header
 - [ ] Certificate expiration date is monitored
-- [ ] Trust store update process is documented and tested
+- [ ] Trust store update process on the validating hop is documented and tested
 
 ### Endpoints
 

@@ -824,14 +824,12 @@ components:
         error_code:
           type: string
           enum:
-            [
-              INSUFFICIENT_POINTS,
-              HOLD_NOT_FOUND,
-              ERROR,
-              INVALID_REQUEST,
-              ALREADY_PROCESSED,
-              MEMBER_NOT_FOUND,
-            ]
+            - INSUFFICIENT_POINTS
+            - HOLD_NOT_FOUND
+            - ERROR
+            - INVALID_REQUEST
+            - ALREADY_PROCESSED
+            - MEMBER_NOT_FOUND
           description: Machine-readable error code.
         message:
           type: string

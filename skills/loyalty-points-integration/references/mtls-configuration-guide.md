@@ -1,10 +1,66 @@
 # mTLS Configuration Guide
 
-This guide covers configuring mutual TLS (mTLS) for the Access Loyalty Points API across all major hosting platforms. Access presents a client certificate signed by a trusted CA. Your server must validate that certificate before requests reach your application.
+This guide is the follow-through after the intake in `SKILL.md` section 3. Load **one** platform section, the one that matches who validates the Access client certificate. Do not start from this file.
 
-> ## Your ingress must support TLS 1.3
+Access presents a client certificate signed by a CA they provide. **The hop that terminates the public hostname must validate that certificate.** Access is satisfied at that hop. Access does not require the application to re-validate the cert, and Access does not define any HTTP header as part of the contract.
+
+Two implementation patterns:
+
+- **Pattern A — edge terminates** (cloud load balancer or reverse proxy). The app sees HTTP. Do not put a keystore in the app.
+- **Pattern B — app terminates** (no LB, or TCP passthrough such as AWS NLB). The app handles the full handshake.
+
+## Network-team brief
+
+Give this to the developer to paste to their network or DevOps team when they do not own the terminating hop, or when Q1 is unanswered. Fill in the hostname. Leave the rest as-is.
+
+```
+Subject: mTLS for Access Loyalty Points callbacks
+
+Access will call:
+
+  https://<LOYALTY_PUBLIC_HOSTNAME>/api/v1/loyalty/*
+
+over mutual TLS. This is server-to-server. There is no API key and no
+bearer token. The client certificate is the authentication.
+
+What we need on the hop that terminates that hostname:
+
+1. TLS 1.3 enabled. Access will not fall back to TLS 1.2.
+2. Client certificates required (verify / reject-invalid, not optional
+   or passthrough).
+3. Trust store contains the Access CA they will send us (PEM, full
+   chain including intermediates). Reject any cert not signed by it.
+4. If the platform supports it, also check the CN / SAN values Access
+   will send us. Do not invent those values.
+5. After validation, the application may receive plain HTTP. Access
+   does not require the app to see the certificate or to check any
+   header. If we already inject an internal trust signal, tell the
+   application team the exact name and how the app is isolated so
+   that signal cannot be spoofed. If we do not already have one, do
+   not invent one for this integration.
+6. Certificate rotation: Access will send a replacement CA before
+   expiry. We need a documented way to add the new CA alongside the
+   old one, then remove the old CA after cutover.
+
+Please tell us which hop does this (cloud LB product, nginx / HAProxy /
+F5 / other) and whether application engineers can change that config
+or it stays with the network team.
+```
+
+### Optional trust headers (Pattern A only)
+
+Some platforms can inject certificate details toward the app (`x-amzn-mtls-clientcert`, Azure rewrite variables, nginx `$ssl_client_verify`, and similar). Those names are platform examples, not an Access contract. Use a header only if the client's network team already has one and names it.
+
+A header is only trustworthy when **both** hold:
+
+1. The edge is in verify / reject-invalid mode. Passthrough and "optional" modes still inject a header that looks identical.
+2. The application is reachable only through that hop. Otherwise any caller who can hit the app directly can set the header themselves.
+
+If either condition is missing, do not have the app authorize on the header. Rely on the edge rejecting the connection.
+
+> ## The terminating hop must support TLS 1.3
 >
-> **The Access caller negotiates TLS 1.3 only and will not fall back to TLS 1.2.** Whichever platform you choose below, confirm that its TLS policy permits 1.3. A policy that caps at TLS 1.2 produces an endpoint Access cannot connect to, and your own `curl` tests will not catch it because they will happily negotiate 1.2.
+> **The Access caller negotiates TLS 1.3 only and will not fall back to TLS 1.2.** Whichever hop validates the client cert, confirm that its TLS policy permits 1.3. A policy that caps at TLS 1.2 produces an endpoint Access cannot connect to, and your own `curl` tests will not catch it because they will happily negotiate 1.2.
 >
 > Verify explicitly, on every platform:
 
@@ -20,17 +76,18 @@ curl -v --tlsv1.3 --tls-max 1.3 \
 
 ## Table of Contents
 
-1. [What Access Provides](#what-access-provides)
-2. [AWS - Application Load Balancer (ALB)](#aws---application-load-balancer-alb)
-3. [AWS - Network Load Balancer (NLB) TCP Passthrough](#aws---network-load-balancer-nlb-tcp-passthrough)
-4. [AWS - API Gateway](#aws---api-gateway)
-5. [Azure - Application Gateway](#azure---application-gateway)
-6. [Google Cloud Platform - Cloud Load Balancer](#google-cloud-platform---cloud-load-balancer)
-7. [On-Premises - Nginx](#on-premises---nginx)
-8. [On-Premises - HAProxy](#on-premises---haproxy)
-9. [Application-Level mTLS (Any Platform)](#application-level-mtls-any-platform)
-10. [Certificate Rotation](#certificate-rotation)
-11. [Platform Comparison Matrix](#platform-comparison-matrix)
+1. [Network-team brief](#network-team-brief)
+2. [What Access Provides](#what-access-provides)
+3. [AWS - Application Load Balancer (ALB)](#aws---application-load-balancer-alb)
+4. [AWS - Network Load Balancer (NLB) TCP Passthrough](#aws---network-load-balancer-nlb-tcp-passthrough)
+5. [AWS - API Gateway](#aws---api-gateway)
+6. [Azure - Application Gateway](#azure---application-gateway)
+7. [Google Cloud Platform - Cloud Load Balancer](#google-cloud-platform---cloud-load-balancer)
+8. [On-Premises - Nginx](#on-premises---nginx)
+9. [On-Premises - HAProxy](#on-premises---haproxy)
+10. [Application-Level mTLS (Any Platform)](#application-level-mtls-any-platform)
+11. [Certificate Rotation](#certificate-rotation)
+12. [Platform Comparison Matrix](#platform-comparison-matrix)
 
 ---
 
@@ -38,7 +95,7 @@ curl -v --tlsv1.3 --tls-max 1.3 \
 
 During onboarding, your Access Implementation Manager provides:
 
-- **Trusted CA certificate** (PEM format) - the CA that signs Access's client certificate. This goes in **your truststore**, so your ingress can validate the certificate Access presents. It has no role in validating your own server certificate.
+- **Trusted CA certificate** (PEM format) - the CA that signs Access's client certificate. This goes in the **truststore of the hop that terminates the public hostname**, so that hop can validate the certificate Access presents. It has no role in validating your own server certificate.
 - **Expected CN and SAN** - subject name (e.g., `CN=accessdevelopment.com`) and Subject Alternative Name (e.g., `DNS:api.accessdevelopment.com`) for validation per RFC 6125
 - **Test endpoint URLs** - sandbox environment for validation
 - **Certificate renewal timeline** - when to expect a replacement certificate
@@ -85,9 +142,9 @@ Access ──[mTLS cert]──▶ ALB (validates cert via trust store) ──[pl
 
 3. **Your application receives plain HTTP** - no certificate handling needed in your app code.
 
-### Passing Client Cert Info to Your App
+### Passing Client Cert Info to Your App (optional)
 
-ALB with `verify` mode rejects invalid certificates at the TLS layer. To pass cert details to your application for logging or additional authorization, use ALB mTLS header injection. The ALB forwards headers such as `x-amzn-mtls-clientcert` containing the client certificate.
+ALB with `verify` mode rejects invalid certificates at the TLS layer. Access does not require the app to see the cert. If the network team already injects a trust signal and wants the app to read it, ALB can forward headers such as `x-amzn-mtls-clientcert`. That name is an AWS example, not an Access contract. See [Optional trust headers](#optional-trust-headers-pattern-a-only).
 
 > **These headers are only trustworthy under two conditions.**
 >
@@ -309,12 +366,14 @@ Access ──[mTLS cert]──▶ App Gateway v2 (validates cert via SSL profile
    Set-AzApplicationGateway -ApplicationGateway $gw
    ```
 
-4. **Configure rewrite rules** (optional) to pass client cert details as headers to your backend:
+4. **Configure rewrite rules** only if the network team already wants the app to see cert details. Access does not require this. Azure can expose variables such as:
    - `client_certificate` - full client cert in PEM
    - `client_certificate_subject` - subject DN
    - `client_certificate_issuer` - issuer DN
    - `client_certificate_fingerprint` - certificate fingerprint *(verify the hash algorithm against current Azure docs before comparing against a stored value; a SHA-1/SHA-256 mismatch fails silently by never matching)*
    - `client_certificate_verification` - SUCCESS / FAILED:<reason> / NONE
+
+   Use the header names the network team already uses. These Azure variable names are not an Access contract. See [Optional trust headers](#optional-trust-headers-pattern-a-only).
 
 ### Common Pitfalls
 
@@ -394,7 +453,7 @@ Access ──[mTLS cert]──▶ Cloud LB (validates cert via Trust Config) ─
      --source=mtls_proxy.yaml --global
    ```
 
-4. **Configure custom headers** (optional) to pass cert details to your backend:
+4. **Configure custom headers** only if the network team already wants the app to see cert details. Access does not require this. The names below are GCP examples, not an Access contract. See [Optional trust headers](#optional-trust-headers-pattern-a-only).
    ```bash
    gcloud compute backend-services update BACKEND_SERVICE --global \
      --custom-request-header='X-Client-Cert-Present:{client_cert_present}' \
@@ -461,11 +520,13 @@ server {
     # ssl_crl /etc/nginx/ssl/access-ca.crl;
 
     location /api/ {
-        # Pass client cert info to backend
-        proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
-        proxy_set_header X-SSL-Client-DN     $ssl_client_s_dn;
-        proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
-        # proxy_set_header X-SSL-Client-Cert  $ssl_client_escaped_cert;  # full cert (urlencoded)
+        # Optional: pass cert info only if the app team asked for a named
+        # trust signal. Access does not require these headers. The names
+        # below are nginx examples, not an Access contract.
+        # proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+        # proxy_set_header X-SSL-Client-DN     $ssl_client_s_dn;
+        # proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
+        # proxy_set_header X-SSL-Client-Cert  $ssl_client_escaped_cert;
 
         proxy_pass http://localhost:8080;
     }
@@ -553,11 +614,12 @@ frontend https_mtls
                verify required
     mode http
 
-    # Pass client cert info to backend.
-    # ssl_c_verify is the verification RESULT (0 = verified OK). Do not use ssl_c_used
-    # here: it only reports that a certificate was PRESENTED, not that it validated.
-    http-request set-header X-SSL-Client-DN %{+Q}[ssl_c_s_dn]
-    http-request set-header X-SSL-Client-Verify %{+Q}[ssl_c_verify]
+    # Optional: pass cert info only if the app team asked for a named trust
+    # signal. Access does not require these headers. If you do set them,
+    # ssl_c_verify is the verification RESULT (0 = verified OK). Do not use
+    # ssl_c_used: it only reports that a certificate was PRESENTED.
+    # http-request set-header X-SSL-Client-DN %{+Q}[ssl_c_s_dn]
+    # http-request set-header X-SSL-Client-Verify %{+Q}[ssl_c_verify]
 
     default_backend loyalty_backend
 
@@ -578,8 +640,6 @@ frontend https_mtls
                ca-file /etc/haproxy/certs/access-ca.pem \
                verify required
     mode http
-
-    http-request set-header X-SSL-Client-DN %{+Q}[ssl_c_s_dn]
 
     default_backend loyalty_backend
 ```
@@ -628,7 +688,7 @@ curl -v \
 
 ## Application-Level mTLS (Any Platform)
 
-Use this approach when you do not have a load balancer/proxy that can handle mTLS, or when using NLB TCP passthrough. Your application handles the full TLS handshake including client certificate validation.
+Use this approach only after the intake in `SKILL.md` answers Q1 as "the application" (scenario 1): no load balancer that can terminate mTLS, or TCP passthrough such as AWS NLB. The application handles the full TLS handshake including client certificate validation. If a cloud LB or reverse proxy already validates the Access cert, do not use this section.
 
 ### Spring Boot (Java)
 

@@ -1,0 +1,904 @@
+# mTLS Configuration Guide
+
+This guide is the follow-through after the intake in `SKILL.md` section 3. Load **one** platform section, the one that matches who validates the Access client certificate. Do not start from this file.
+
+Access presents a client certificate signed by a CA they provide. **The hop that terminates the public hostname must validate that certificate.** Access is satisfied at that hop. Access does not require the application to re-validate the cert, and Access does not define any HTTP header as part of the contract.
+
+Two implementation patterns:
+
+- **Pattern A — edge terminates** (cloud load balancer or reverse proxy). The app sees HTTP. Do not put a keystore in the app.
+- **Pattern B — app terminates** (no LB, or TCP passthrough such as AWS NLB). The app handles the full handshake.
+
+## Network-team brief
+
+Give this to the developer to paste to their network or DevOps team when they do not own the terminating hop, or when Q1 is unanswered. Fill in the hostname. Leave the rest as-is.
+
+```
+Subject: mTLS for Access Loyalty Points callbacks
+
+Access will call:
+
+  https://<LOYALTY_PUBLIC_HOSTNAME>/api/v1/loyalty/*
+
+over mutual TLS. This is server-to-server. There is no API key and no
+bearer token. The client certificate is the authentication.
+
+What we need on the hop that terminates that hostname:
+
+1. TLS 1.3 enabled. Access will not fall back to TLS 1.2.
+2. Client certificates required (verify / reject-invalid, not optional
+   or passthrough).
+3. Trust store contains the Access CA they will send us (PEM, full
+   chain including intermediates). Reject any cert not signed by it.
+4. If the platform supports it, also check the CN / SAN values Access
+   will send us. Do not invent those values.
+5. After validation, the application may receive plain HTTP. Access
+   does not require the app to see the certificate or to check any
+   header. If we already inject an internal trust signal, tell the
+   application team the exact name and how the app is isolated so
+   that signal cannot be spoofed. If we do not already have one, do
+   not invent one for this integration.
+6. Certificate rotation: Access will send a replacement CA before
+   expiry. We need a documented way to add the new CA alongside the
+   old one, then remove the old CA after cutover.
+
+Please tell us which hop does this (cloud LB product, nginx / HAProxy /
+F5 / other) and whether application engineers can change that config
+or it stays with the network team.
+```
+
+### Optional trust headers (Pattern A only)
+
+Some platforms can inject certificate details toward the app (`x-amzn-mtls-clientcert`, Azure rewrite variables, nginx `$ssl_client_verify`, and similar). Those names are platform examples, not an Access contract. Use a header only if the client's network team already has one and names it.
+
+A header is only trustworthy when **both** hold:
+
+1. The edge is in verify / reject-invalid mode. Passthrough and "optional" modes still inject a header that looks identical.
+2. The application is reachable only through that hop. Otherwise any caller who can hit the app directly can set the header themselves.
+
+If either condition is missing, do not have the app authorize on the header. Rely on the edge rejecting the connection.
+
+> ## The terminating hop must support TLS 1.3
+>
+> **The Access caller negotiates TLS 1.3 only and will not fall back to TLS 1.2.** Whichever hop validates the client cert, confirm that its TLS policy permits 1.3. A policy that caps at TLS 1.2 produces an endpoint Access cannot connect to, and your own `curl` tests will not catch it because they will happily negotiate 1.2.
+>
+> Verify explicitly, on every platform:
+
+```bash
+curl -v --tlsv1.3 --tls-max 1.3 \
+  --cert access-client.crt --key access-client.key \
+  --cacert your-server-ca.crt \
+  "https://your-api.example.com/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+```
+
+> The OpenAPI spec's security scheme requires TLS 1.3. Access will not fall back to TLS 1.2.
+
+## Table of Contents
+
+1. [Network-team brief](#network-team-brief)
+2. [What Access Provides](#what-access-provides)
+3. [AWS - Application Load Balancer (ALB)](#aws---application-load-balancer-alb)
+4. [AWS - Network Load Balancer (NLB) TCP Passthrough](#aws---network-load-balancer-nlb-tcp-passthrough)
+5. [AWS - API Gateway](#aws---api-gateway)
+6. [Azure - Application Gateway](#azure---application-gateway)
+7. [Google Cloud Platform - Cloud Load Balancer](#google-cloud-platform---cloud-load-balancer)
+8. [On-Premises - Nginx](#on-premises---nginx)
+9. [On-Premises - HAProxy](#on-premises---haproxy)
+10. [Application-Level mTLS (Any Platform)](#application-level-mtls-any-platform)
+11. [Certificate Rotation](#certificate-rotation)
+12. [Platform Comparison Matrix](#platform-comparison-matrix)
+
+---
+
+## What Access Provides
+
+During onboarding, your Access Implementation Manager provides:
+
+- **Trusted CA certificate** (PEM format) - the CA that signs Access's client certificate. This goes in the **truststore of the hop that terminates the public hostname**, so that hop can validate the certificate Access presents. It has no role in validating your own server certificate.
+- **Expected CN and SAN** - subject name (e.g., `CN=accessdevelopment.com`) and Subject Alternative Name (e.g., `DNS:api.accessdevelopment.com`) for validation per RFC 6125
+- **Test endpoint URLs** - sandbox environment for validation
+- **Certificate renewal timeline** - when to expect a replacement certificate
+
+Store the CA certificate securely. It is the root of trust for all Access-to-you communication.
+
+---
+
+## AWS - Application Load Balancer (ALB)
+
+**Pattern**: Ingress terminates mTLS. ALB validates the client certificate, terminates TLS, forwards plain HTTP to your application.
+
+**Support**: GA since November 2023. Available in all commercial AWS regions.
+
+### Architecture
+
+```
+Access ──[mTLS cert]──▶ ALB (validates cert via trust store) ──[plain HTTP]──▶ Your App (EC2/ECS/EKS)
+```
+
+### Configuration Steps
+
+1. **Create a trust store** - Upload the Access CA certificate as a PEM file to S3:
+   ```bash
+   aws s3 cp access-ca.pem s3://your-truststore-bucket/access-ca.pem
+   ```
+
+2. **Create an ALB with mTLS listener** - Configure the HTTPS listener with mutual authentication:
+   ```bash
+   aws elbv2 create-trust-store \
+     --name access-mtls-trust-store \
+     --ca-certificates-bundle-s3-bucket your-truststore-bucket \
+     --ca-certificates-bundle-s3-key access-ca.pem
+   
+   aws elbv2 create-listener \
+     --load-balancer-arn <your-alb-arn> \
+     --protocol HTTPS \
+     --port 443 \
+     --certificates CertificateArn=<your-acm-cert-arn> \
+     --ssl-policy ELBSecurityPolicy-TLS13-1-2-2021-06 \
+     --default-actions Type=forward,TargetGroupArn=<your-tg-arn> \
+     --mutual-authentication Mode=verify,TrustStoreArn=<trust-store-arn>
+   ```
+
+3. **Your application receives plain HTTP** - no certificate handling needed in your app code.
+
+### Passing Client Cert Info to Your App (optional)
+
+ALB with `verify` mode rejects invalid certificates at the TLS layer. Access does not require the app to see the cert. If the network team already injects a trust signal and wants the app to read it, ALB can forward headers such as `x-amzn-mtls-clientcert`. That name is an AWS example, not an Access contract. See [Optional trust headers](#optional-trust-headers-pattern-a-only).
+
+> **These headers are only trustworthy under two conditions.**
+>
+> 1. **The listener is in `verify` mode.** ALB also injects these headers in `passthrough` mode, where the certificate is forwarded but **not validated**. The header looks identical either way. If you later switch to passthrough, any authorization logic reading these headers silently starts trusting unvalidated input.
+> 2. **Your targets are reachable only through the ALB.** ALB strips inbound copies of `x-amzn-mtls-*` headers, so a client cannot spoof them through the load balancer. But if your target group is directly reachable (common in EKS or shared-VPC setups), a caller that bypasses the ALB can set these headers itself. Restrict target security groups to the ALB.
+>
+> Treat cert headers as an authorization input only when both hold. For authentication, rely on `verify` mode rejecting the connection.
+
+### Common Pitfalls
+
+- **Incomplete CA chain**: If Access uses an intermediate CA, your trust store PEM must include the full chain (intermediate + root). A common error is uploading only the root CA. Concatenate: `cat intermediate.pem root.pem > access-ca.pem`
+- **Revocation**: ALB trust stores support certificate revocation lists. Upload a CRL with `aws elbv2 add-trust-store-revocations --trust-store-arn <arn> --revocation-contents ...` and inspect with `describe-trust-store-revocations`. OCSP is not supported; if you need live revocation checks, do them at the application layer.
+- **Certificate requirements**: Each certificate must be SHA-256+ and RSA-2048+ or ECDSA-256+.
+- **TLS policy**: `ELBSecurityPolicy-TLS13-1-2-2021-06` permits TLS 1.3 and is a safe default. Do not substitute a TLS-1.2-only policy (see the TLS 1.3 note at the top of this guide).
+- *(Verify with AWS docs before relying on these: trust store size cap, maximum chain depth, and whether the S3 bucket must be in the same region as the ALB. These limits are documented for API Gateway and may not apply identically to ALB.)*
+
+### Testing
+
+```bash
+# Test with Access client cert through ALB
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  "https://your-alb-dns/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+
+# Without client cert (should fail)
+curl -v "https://your-alb-dns/api/v1/loyalty/balance?member_key=abc123"
+```
+
+---
+
+## AWS - Network Load Balancer (NLB) TCP Passthrough
+
+**Pattern**: NLB forwards raw TCP. Your application handles the full TLS handshake and client certificate validation.
+
+**Support**: Always available (NLB TCP listener passes through any traffic).
+
+### Architecture
+
+```
+Access ──[mTLS cert]──▶ NLB (TCP forward, no TLS inspection) ──[encrypted TLS]──▶ Your App
+```
+
+### Configuration Steps
+
+1. **Create NLB with TCP listener** (not TLS listener):
+   ```bash
+   aws elbv2 create-load-balancer \
+     --name your-nlb \
+     --type network \
+     --subnets <subnet-ids>
+   
+   aws elbv2 create-listener \
+     --load-balancer-arn <nlb-arn> \
+     --protocol TCP \
+     --port 443 \
+     --default-actions Type=forward,TargetGroupArn=<tg-arn>
+   ```
+
+2. **Target group uses TCP protocol**:
+   ```bash
+   aws elbv2 create-target-group \
+     --name your-tg \
+     --protocol TCP \
+     --port 8443 \
+     --target-type instance \
+     --health-check-protocol TCP \
+     --health-check-port 8443
+   ```
+
+3. **Configure your application for mTLS** - See [Application-Level mTLS](#application-level-mtls-any-platform) for Spring Boot, Node.js, and Python examples. Your app needs:
+   - A server keystore (your server certificate + private key)
+   - A truststore containing the Access CA certificate
+   - `client-auth=need` (or equivalent) to require client certificates
+
+### Common Pitfalls
+
+- **Use TCP listener, not TLS listener**: A TLS listener would terminate TLS at the NLB and require a server certificate there, preventing mTLS passthrough. The NLB must be a pure TCP forwarder.
+- **Health checks must be TCP, not HTTP**: If your app requires a client certificate on every connection, HTTP health checks will fail because they do not present a cert. Use TCP health checks instead.
+- **Your app must handle TLS fully**: You need both a server certificate (for the TLS connection itself) and the Access CA in your truststore (for client cert validation). This is more configuration than the ALB approach.
+- **Security groups**: The NLB security group must allow inbound TCP 443. Your app security group must allow inbound from the NLB on port 8443 (or whatever port your app listens on).
+
+### Testing
+
+```bash
+# Test directly against your app first (bypass NLB)
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  --cacert your-server-ca.crt \
+  "https://your-app-host:8443/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+
+# Then through NLB
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  "https://your-nlb-dns/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+```
+
+---
+
+## AWS - API Gateway
+
+**Pattern**: API Gateway validates the client certificate using a truststore in S3, then forwards to your backend (Lambda, HTTP API, or VPC integration).
+
+**Support**: REST APIs and HTTP APIs (not private APIs). Regional custom domain names only.
+
+### Architecture
+
+```
+Access ──[mTLS cert]──▶ API Gateway (validates cert via truststore) ──[HTTP]──▶ Your Backend
+```
+
+### Configuration Steps
+
+1. **Prepare the truststore PEM** and upload to S3:
+   ```bash
+   aws s3 cp access-ca.pem s3://your-truststore-bucket/access-ca.pem
+   ```
+
+2. **Create a Regional custom domain name with mTLS**:
+   ```bash
+   aws apigateway create-domain-name \
+     --domain-name loyalty.yourdomain.com \
+     --regional-certificate-arn <acm-cert-arn> \
+     --endpoint-configuration types=REGIONAL \
+     --security-policy TLS_1_2 \
+     --mutual-tls-authentication truststoreUri=s3://your-truststore-bucket/access-ca.pem
+   ```
+
+   `--security-policy TLS_1_2` sets the **minimum** TLS version, not the maximum. API Gateway custom domains negotiate TLS 1.3 with clients that support it, so this value is compatible with the Access caller. There is no TLS-1.3-only policy value.
+
+3. **Create API mappings** from the custom domain to your API stage. If you map the stage under a base path of `api`, your endpoints are served at `https://loyalty.yourdomain.com/api/v1/loyalty/...`, matching the `servers` entry in the OpenAPI spec and the examples elsewhere in this guide. Adjust the test URLs below if you choose a different base path.
+
+4. **Disable the default execute-api endpoint** so traffic only goes through the mTLS-protected custom domain:
+   ```bash
+   aws apigateway update-rest-api \
+     --rest-api-id <your-api-id> \
+     --patch-operations op='replace',path='/disableExecuteApiEndpoint',value='true'
+   ```
+
+### Common Pitfalls
+
+- **Regional custom domain only**: Edge-optimized custom domains do not support mTLS. You must use a Regional domain.
+- **Default execute-api endpoint bypasses mTLS**: If you do not disable it, clients can reach your API without presenting a certificate via the default `execute-api.amazonaws.com` URL. This is a security gap.
+- **No CRL/OCSP revocation**: API Gateway does not check certificate revocation. Use a Lambda authorizer if you need revocation checking (client cert details are available in the authorizer event under `requestContext.identity.clientCert` or `authentication.clientCert`).
+- **Ownership verification certificate**: If using an imported or ACM Private CA certificate, you need a separate valid `ownershipVerificationCertificate` in ACM to prove domain ownership. Keep it valid - expiration can lock domain updates.
+- **Truststore PEM format**: Must be a single PEM file with the complete CA chain. Max chain length: 4. Up to ~1,000 certs / 1 MB total.
+
+### Testing
+
+```bash
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  "https://loyalty.yourdomain.com/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+```
+
+---
+
+## Azure - Application Gateway
+
+**Pattern**: Application Gateway v2 terminates mTLS, validates the client certificate against uploaded CA chains, forwards plain HTTP to your backend.
+
+**Support**: Standard_v2 and WAF_v2 SKUs only. Not available on v1.
+
+### Architecture
+
+```
+Access ──[mTLS cert]──▶ App Gateway v2 (validates cert via SSL profile) ──[plain HTTP]──▶ Your Backend
+```
+
+### Configuration Steps
+
+1. **Prepare the trusted client CA chain** - Create a PEM/CER file with the Access CA chain (intermediates first, then root). One root CA per file. Max 25 KB per file. Do not include the leaf certificate or private keys.
+
+2. **Create an SSL profile with client authentication**:
+   ```powershell
+   $trustedClient = New-AzApplicationGatewayTrustedClientCertificate `
+     -Name "AccessClientCA" `
+     -CertificateFile "C:\path\to\access-ca-chain.cer"
+
+   $sslProfile = New-AzApplicationGatewaySslProfile `
+     -Name "mTLSProfile" `
+     -TrustedClientCertificates $trustedClient
+   ```
+
+3. **Associate the SSL profile with an HTTPS listener, then commit the change**:
+   ```powershell
+   # Existing gateway and its already-configured cert / frontend IP / port
+   $gw       = Get-AzApplicationGateway -Name "myAppGateway" -ResourceGroupName "myRG"
+   $sslCert  = Get-AzApplicationGatewaySslCertificate  -ApplicationGateway $gw -Name "mySslCert"
+   $fipconfig = Get-AzApplicationGatewayFrontendIPConfig -ApplicationGateway $gw -Name "myFrontendIP"
+   $port     = Get-AzApplicationGatewayFrontendPort    -ApplicationGateway $gw -Name "port443"
+
+   $listener = New-AzApplicationGatewayHttpListener `
+     -Name "httpsListener" `
+     -Protocol Https `
+     -SslCertificate $sslCert `
+     -FrontendIPConfiguration $fipconfig `
+     -FrontendPort $port `
+     -SslProfile $sslProfile
+
+   # Attach everything to the gateway object, then push it to Azure.
+   # Without this final step the commands above only create local PowerShell objects
+   # and nothing changes on the Application Gateway.
+   Add-AzApplicationGatewayTrustedClientCertificate -ApplicationGateway $gw `
+     -Name "AccessClientCA" -CertificateFile "C:\path\to\access-ca-chain.cer"
+   Add-AzApplicationGatewaySslProfile -ApplicationGateway $gw `
+     -Name "mTLSProfile" -TrustedClientCertificates $trustedClient
+   Add-AzApplicationGatewayHttpListener -ApplicationGateway $gw `
+     -Name "httpsListener" -Protocol Https -SslCertificate $sslCert `
+     -FrontendIPConfiguration $fipconfig -FrontendPort $port -SslProfile $sslProfile
+
+   Set-AzApplicationGateway -ApplicationGateway $gw
+   ```
+
+4. **Configure rewrite rules** only if the network team already wants the app to see cert details. Access does not require this. Azure can expose variables such as:
+   - `client_certificate` - full client cert in PEM
+   - `client_certificate_subject` - subject DN
+   - `client_certificate_issuer` - issuer DN
+   - `client_certificate_fingerprint` - certificate fingerprint *(verify the hash algorithm against current Azure docs before comparing against a stored value; a SHA-1/SHA-256 mismatch fails silently by never matching)*
+   - `client_certificate_verification` - SUCCESS / FAILED:<reason> / NONE
+
+   Use the header names the network team already uses. These Azure variable names are not an Access contract. See [Optional trust headers](#optional-trust-headers-pattern-a-only).
+
+### Common Pitfalls
+
+- **v2 SKU required**: v1 Application Gateways do not support mTLS. You must use Standard_v2 or WAF_v2.
+- **One root CA per file**: If you concatenate multiple root CAs into a single file, Azure rejects it with `ApplicationGatewayOnlyOneRootCAAllowedInTrustedClientCertificate`. Use separate files for different root CAs.
+- **Do not include the leaf certificate**: The trusted client CA file should contain only CA certificates (root + intermediates). If you include the leaf, Azure ignores it.
+- **Missing intermediate CAs**: If Access uses an intermediate CA, your file must include it. A common error is `FAILED: unable to get issuer certificate` in access logs.
+- **OCSP revocation**: OCSP is supported (not CRL). Enable via PowerShell (not portal). If the OCSP responder is unreachable, clients receive HTTP 400.
+- **Verification behavior**: Azure's client authentication is configured through the SSL profile's `ClientAuthConfiguration` (`VerifyClientCertIssuerDN`, `VerifyClientRevocation`). *(An earlier draft of this guide described a "strict vs passthrough mode" toggle here. That is AWS ALB terminology and does not appear in Azure's SSL profile model. Confirm the exact verification semantics against the `ClientAuthConfiguration` schema before relying on them.)*
+- *(Verify before relying on it: CA chain limits per SSL profile and per Application Gateway.)*
+
+### Testing
+
+```bash
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  "https://your-app-gateway-dns/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+```
+
+---
+
+## Google Cloud Platform - Cloud Load Balancer
+
+**Pattern**: GCP Application Load Balancer validates the client certificate using a Trust Config (Certificate Manager), then forwards plain HTTP to your backend.
+
+**Support**: Global external, regional external, regional internal, and cross-region internal Application Load Balancers.
+
+> **The classic Application Load Balancer does not support mTLS.** You cannot attach a `ServerTlsPolicy` with an `mtlsPolicy` to a classic LB's target HTTPS proxy; the `target-https-proxies import` step will be rejected. If you are on a classic LB, migrate to the global external Application Load Balancer before starting this section.
+
+### Architecture
+
+```
+Access ──[mTLS cert]──▶ Cloud LB (validates cert via Trust Config) ──[plain HTTP]──▶ Your Backend
+```
+
+### Configuration Steps
+
+1. **Create a Trust Config** with the Access CA as a trust anchor:
+   ```yaml
+   # trust_config.yaml
+   trustStores:
+   - trustAnchors:
+     - pemCertificate: "${ACCESS_CA_CERT}"
+   ```
+
+   ```bash
+   gcloud certificate-manager trust-configs import access-trust-config \
+     --source=trust_config.yaml \
+     --location=global
+   ```
+
+2. **Create a ServerTlsPolicy** with strict validation:
+   ```yaml
+   # server_tls_policy.yaml
+   name: access-mtls-policy
+   mtlsPolicy:
+     clientValidationMode: REJECT_INVALID
+     clientValidationTrustConfig: projects/PROJECT_ID/locations/global/trustConfigs/access-trust-config
+   ```
+
+   ```bash
+   gcloud network-security server-tls-policies import access-mtls-policy \
+     --source=server_tls_policy.yaml \
+     --location=global
+   ```
+
+3. **Attach the ServerTlsPolicy to your target HTTPS proxy**:
+   ```bash
+   gcloud compute target-https-proxies export TARGET_PROXY \
+     --destination=mtls_proxy.yaml --global
+
+   echo "serverTlsPolicy: //networksecurity.googleapis.com/projects/PROJECT_ID/locations/global/serverTlsPolicies/access-mtls-policy" >> mtls_proxy.yaml
+
+   gcloud compute target-https-proxies import TARGET_PROXY \
+     --source=mtls_proxy.yaml --global
+   ```
+
+4. **Configure custom headers** only if the network team already wants the app to see cert details. Access does not require this. The names below are GCP examples, not an Access contract. See [Optional trust headers](#optional-trust-headers-pattern-a-only).
+   ```bash
+   gcloud compute backend-services update BACKEND_SERVICE --global \
+     --custom-request-header='X-Client-Cert-Present:{client_cert_present}' \
+     --custom-request-header='X-Client-Cert-Verified:{client_cert_chain_verified}' \
+     --custom-request-header='X-Client-Cert-Error:{client_cert_error}'
+   ```
+
+### Common Pitfalls
+
+- **Certificate requirements are strict**: Client certs must have Extended Key Usage including `clientAuth` (`1.3.6.1.5.5.7.3.2`). CA certs must have `CA:TRUE` in Basic Constraints and `keyCertSign` in Key Usage. Missing these causes silent rejection.
+- **No SHA-1**: SHA-1 hashing is not supported. Use SHA-256+.
+- **Location matters**: The Trust Config and ServerTlsPolicy location (global vs regional) must match your load balancer type. Global for global external and cross-region internal LBs, regional for regional LBs. (Classic LBs are not supported at all; see above.)
+- **REJECT_INVALID vs ALLOW_INVALID_OR_MISSING_CLIENT_CERT**: Use `REJECT_INVALID` for the Access Loyalty Points API. The permissive mode forwards requests even without a valid cert, which defeats the purpose.
+- **Trust Config is a separate resource**: It is not part of the load balancer configuration directly. You create it in Certificate Manager, then reference it from the ServerTlsPolicy, then attach the policy to the target proxy. This three-step indirection is a common source of confusion.
+- **Chain length**: Maximum 10 intermediate certificates in the chain. *(Note this is a count of intermediates, which is not the same measure as the "chain depth" column in the comparison matrix. Verify against current GCP docs if you are close to the limit.)*
+
+### Testing
+
+```bash
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  "https://your-lb-dns/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+```
+
+---
+
+## On-Premises - Nginx
+
+**Pattern**: Nginx terminates mTLS, validates the client certificate against a CA file, forwards plain HTTP to your backend.
+
+**Support**: Full mTLS support in all modern Nginx versions with `--with-http_ssl_module`.
+
+### Architecture
+
+```
+Access ──[mTLS cert]──▶ Nginx (validates cert via ssl_client_certificate) ──[plain HTTP]──▶ Your Backend
+```
+
+### Configuration
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name loyalty.yourdomain.com;
+
+    # Server certificate
+    ssl_certificate     /etc/nginx/ssl/server.crt;
+    ssl_certificate_key /etc/nginx/ssl/server.key;
+
+    # mTLS - client certificate verification
+    ssl_client_certificate /etc/nginx/ssl/access-ca.pem;  # Access CA chain
+    ssl_verify_client on;                                 # Require valid client cert
+    ssl_verify_depth 2;                                   # Allow intermediate CAs (default 1)
+
+    # TLS settings
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5:!RC4;
+    ssl_prefer_server_ciphers on;
+
+    # Optional: CRL for revocation
+    # ssl_crl /etc/nginx/ssl/access-ca.crl;
+
+    location /api/ {
+        # Optional: pass cert info only if the app team asked for a named
+        # trust signal. Access does not require these headers. The names
+        # below are nginx examples, not an Access contract.
+        # proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+        # proxy_set_header X-SSL-Client-DN     $ssl_client_s_dn;
+        # proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
+        # proxy_set_header X-SSL-Client-Cert  $ssl_client_escaped_cert;
+
+        proxy_pass http://localhost:8080;
+    }
+}
+```
+
+### Conditional mTLS (Optional)
+
+> **Prefer a dedicated vhost or hostname for the loyalty endpoints.** The pattern below sets `ssl_verify_client optional` for the whole server block, which means nginx completes handshakes with untrusted certificates on *every* path it serves, and only the loyalty `location` re-checks the result. That lowers the security posture of the entire vhost to enable one path. If you can terminate the loyalty endpoints on their own `server { }` with `ssl_verify_client on`, do that instead.
+
+If you must serve mTLS and non-mTLS traffic from one server block:
+
+```nginx
+ssl_verify_client optional;  # Request cert but do not require globally
+ssl_client_certificate /etc/nginx/ssl/access-ca.pem;
+
+location /api/v1/loyalty/ {
+    if ($ssl_client_verify != SUCCESS) {
+        return 403;
+    }
+    proxy_pass http://localhost:8080;
+}
+
+location / {
+    # No mTLS required here
+    proxy_pass http://localhost:8080;
+}
+```
+
+### Common Pitfalls
+
+- **ssl_verify_depth**: Default is 1, which only allows direct issuer verification. If Access uses an intermediate CA, set `ssl_verify_depth 2` (or higher for deeper chains). A common symptom: "client cert works from curl but fails through Nginx" when the chain has intermediates.
+- **Use `ssl_client_certificate`, not `ssl_trusted_certificate`, for this integration**: Nginx sends the CA names from `ssl_client_certificate` to the client in the TLS CertificateRequest message. `ssl_trusted_certificate` validates without advertising those names. That sounds like a privacy win, but **it will likely break the Access caller**: Access uses a Java client (OkHttp on JSSE), and JSSE selects a client certificate by matching against the CA list in the CertificateRequest. With an empty list, the Java client commonly sends no certificate at all and nginx then returns 496. Only switch to `ssl_trusted_certificate` if you have confirmed the handshake still succeeds end to end.
+- **Error codes**: Nginx returns 495 for certificate verification errors and 496 when no certificate is provided. Use `error_page` for custom responses:
+  ```nginx
+  error_page 495 496 = @mtls_error;
+  location @mtls_error {
+      default_type application/json;
+      return 403 '{"error_code":"INVALID_REQUEST","message":"Client certificate required"}';
+  }
+  ```
+  Note `default_type` rather than `add_header`. A bare `add_header` only applies to a fixed set of status codes (200, 201, 204, 206, 301, 302, 303, 304, 307, 308); on a 403 it is silently dropped and the body goes out with the wrong content type. `add_header ... always` would also work.
+- **Java client compatibility**: Java's HTTP client may require the full certificate chain in the truststore. If Access's client cert includes an intermediate, ensure your `access-ca.pem` contains both intermediate and root.
+
+### Testing
+
+```bash
+# With valid client cert
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  --cacert your-server-ca.crt \
+  "https://loyalty.yourdomain.com/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+
+# Without client cert (should fail with 496)
+curl -v "https://loyalty.yourdomain.com/api/v1/loyalty/balance?member_key=abc123"
+
+# OpenSSL debug
+openssl s_client -connect loyalty.yourdomain.com:443 \
+  -cert access-client.crt -key access-client.key \
+  -CAfile your-server-ca.crt -showcerts
+```
+
+---
+
+## On-Premises - HAProxy
+
+**Pattern**: HAProxy terminates mTLS, validates the client certificate against a CA file, forwards plain HTTP to your backend.
+
+**Support**: All modern HAProxy versions. `crt-store` available in 3.0+. `ssl-f-use` available in 3.2+.
+
+### Architecture
+
+```
+Access ──[mTLS cert]──▶ HAProxy (validates cert via ca-file) ──[plain HTTP]──▶ Your Backend
+```
+
+### Configuration (Traditional)
+
+```haproxy
+frontend https_mtls
+    bind *:443 ssl crt /etc/haproxy/certs/server.pem \
+               ca-file /etc/haproxy/certs/access-ca.pem \
+               verify required
+    mode http
+
+    # Optional: pass cert info only if the app team asked for a named trust
+    # signal. Access does not require these headers. If you do set them,
+    # ssl_c_verify is the verification RESULT (0 = verified OK). Do not use
+    # ssl_c_used: it only reports that a certificate was PRESENTED.
+    # http-request set-header X-SSL-Client-DN %{+Q}[ssl_c_s_dn]
+    # http-request set-header X-SSL-Client-Verify %{+Q}[ssl_c_verify]
+
+    default_backend loyalty_backend
+
+backend loyalty_backend
+    server app1 127.0.0.1:8080 check
+```
+
+### Configuration (HAProxy 3.0+ with crt-store)
+
+```haproxy
+crt-store mycerts
+    crt-base /etc/haproxy/ssl/certs/
+    key-base /etc/haproxy/ssl/private/
+    load crt "server.pem" alias "myserver"
+
+frontend https_mtls
+    bind *:443 ssl crt "@mycerts/myserver" \
+               ca-file /etc/haproxy/certs/access-ca.pem \
+               verify required
+    mode http
+
+    default_backend loyalty_backend
+```
+
+### With Intermediate CA Separation (HAProxy 2.2+)
+
+```haproxy
+frontend https_mtls
+    bind *:443 ssl crt /etc/haproxy/certs/server.pem \
+               ca-file /etc/haproxy/certs/access-intermediate.pem \
+               ca-verify-file /etc/haproxy/certs/access-root.pem \
+               verify required
+    mode http
+    default_backend loyalty_backend
+```
+
+Use `ca-file` for the intermediate CA (sent to client in CertificateRequest) and `ca-verify-file` for the root CA (used for full verification but not sent to client).
+
+### Common Pitfalls
+
+- **ca-file vs ca-verify-file**: `ca-file` CAs are sent to the client in the CertificateRequest message. `ca-verify-file` CAs are used for verification but not sent. If you do not want to expose your root CA list to clients, use `ca-verify-file` for the root and `ca-file` for intermediates only.
+- **verify optional does not reject**: `verify optional` requests a cert but does not reject invalid or missing ones. Prefer `verify required` on a dedicated frontend. If you genuinely need path-based enforcement, the ACL must test the **verification result**, not merely that a certificate was presented:
+  ```haproxy
+  # ssl_c_used  = a client certificate was PRESENTED (true even if self-signed/expired)
+  # ssl_c_verify = OpenSSL verification result; 0 means verified successfully
+  acl has_cert       ssl_c_used
+  acl cert_verified  ssl_c_verify eq 0
+  http-request deny unless has_cert cert_verified
+  ```
+  **Do not use `ssl_c_used` alone.** Under `verify optional` the handshake completes even for an untrusted, self-signed, or expired certificate, and `ssl_c_used` is still true. An ACL that checks only `ssl_c_used` therefore admits any caller who presents any certificate, which defeats mTLS entirely.
+- **Full chain in ca-file**: If Access uses an intermediate CA, include both intermediate and root in the `ca-file` PEM file. A common error is including only the root, causing intermediate-signed client certs to be rejected.
+- **CRL support**: Use `crl-file` for revocation lists. The CRL file must cover all CAs in the `ca-file`.
+- **Health checks**: If your backend also requires the client cert (end-to-end mTLS), health checks may fail. Use TCP health checks or exempt health check paths from mTLS.
+
+### Testing
+
+```bash
+curl -v \
+  --cert access-client.crt \
+  --key access-client.key \
+  "https://loyalty.yourdomain.com/api/v1/loyalty/balance?member_key=abc123" \
+  -H "X-Request-Timestamp: 2024-01-15T12:00:00Z"
+```
+
+---
+
+## Application-Level mTLS (Any Platform)
+
+Use this approach only after the intake in `SKILL.md` answers Q1 as "the application" (scenario 1): no load balancer that can terminate mTLS, or TCP passthrough such as AWS NLB. The application handles the full TLS handshake including client certificate validation. If a cloud LB or reverse proxy already validates the Access cert, do not use this section.
+
+### Spring Boot (Java)
+
+```properties
+# application.properties
+server.port=8443
+server.ssl.enabled=true
+
+# Server certificate (keystore)
+server.ssl.key-store=classpath:keystore.p12
+server.ssl.key-store-password=${KEYSTORE_PASSWORD}
+server.ssl.key-store-type=PKCS12
+
+# Client certificate truststore (Access CA)
+server.ssl.trust-store=classpath:truststore.p12
+server.ssl.trust-store-password=${TRUSTSTORE_PASSWORD}
+server.ssl.trust-store-type=PKCS12
+
+# Require client certificate
+server.ssl.client-auth=need
+
+# TLS 1.3 must be enabled. Listing TLSv1.2 as well is permissive, not enforcing:
+# it allows 1.2 for other callers while still satisfying Access, which uses 1.3.
+server.ssl.protocol=TLS
+server.ssl.enabled-protocols=TLSv1.3,TLSv1.2
+
+# To enforce TLS 1.3 only (matching the Node.js and Python examples below):
+# server.ssl.enabled-protocols=TLSv1.3
+```
+
+**Spring Boot 3.1+ with SSL Bundles** (recommended):
+
+```yaml
+spring:
+  ssl:
+    bundle:
+      jks:
+        loyalty-server:
+          key:
+            alias: server
+          keystore:
+            location: classpath:keystore.p12
+            password: ${KEYSTORE_PASSWORD}
+            type: PKCS12
+          truststore:
+            location: classpath:truststore.p12
+            password: ${TRUSTSTORE_PASSWORD}
+            type: PKCS12
+
+server:
+  port: 8443
+  ssl:
+    bundle: loyalty-server
+    client-auth: need
+```
+
+**Extracting client cert info in Spring Security**:
+
+```java
+@Bean
+SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    http
+        // Required: this is a machine-to-machine API. With CSRF enabled (the default),
+        // all four POST endpoints are rejected with 403 before reaching a controller.
+        .csrf(csrf -> csrf.disable())
+        .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+        .x509(x509 -> x509
+            .subjectPrincipalRegex("CN=(.*?)(?:,|$)")
+            // Required: x509() resolves the extracted CN through a UserDetailsService.
+            // Without one, authentication fails and even GET /balance returns 403.
+            .userDetailsService(username ->
+                new User(username, "", List.of(new SimpleGrantedAuthority("ROLE_ACCESS")))));
+    return http.build();
+}
+```
+
+Both the `csrf` and `userDetailsService` lines are load-bearing. Omitting either produces a 403 on every request, which is easily mistaken for an mTLS failure.
+
+Or access the certificate directly:
+
+```java
+X509Certificate[] certs = (X509Certificate[]) request
+    .getAttribute("jakarta.servlet.request.X509Certificate");
+```
+
+### Node.js (Express)
+
+```javascript
+const https = require('https');
+const fs = require('fs');
+const express = require('express');
+
+const app = express();
+
+const options = {
+  key: fs.readFileSync('server.key'),
+  cert: fs.readFileSync('server.crt'),
+  ca: fs.readFileSync('access-ca.pem'),     // Access CA for client cert validation
+  requestCert: true,                         // Request client certificate
+  rejectUnauthorized: true,                  // Reject if cert is invalid or missing
+  minVersion: 'TLSv1.3',
+};
+
+app.get('/api/v1/loyalty/balance', (req, res) => {
+  const clientCert = req.socket.getPeerCertificate();
+  if (!req.socket.authorized) {
+    return res.status(403).json({
+      error_code: 'INVALID_REQUEST',
+      message: 'Valid client certificate required'
+    });
+  }
+  // clientCert.subject, clientCert.issuer, clientCert.fingerprint available
+  // ... handle balance request
+});
+
+https.createServer(options, app).listen(8443);
+```
+
+### Python (FastAPI / uvicorn)
+
+`uvicorn.run()` does not accept a pre-built `SSLContext`. Pass its TLS settings as individual keyword arguments:
+
+```python
+import ssl
+import uvicorn
+
+if __name__ == '__main__':
+    uvicorn.run(
+        'app:app',
+        host='0.0.0.0',
+        port=8443,
+        ssl_certfile='server.crt',
+        ssl_keyfile='server.key',
+        ssl_ca_certs='access-ca.pem',        # Access CA for client cert validation
+        ssl_cert_reqs=ssl.CERT_REQUIRED,     # Reject missing or invalid client certs
+    )
+```
+
+> **Do not pass `ssl=ssl_context`.** `uvicorn.run()` has no `ssl` parameter and raises `TypeError: __init__() got an unexpected keyword argument 'ssl'`. The dangerous failure mode is "fixing" that crash by deleting the argument, which leaves uvicorn serving **plain HTTP with no client certificate validation at all**.
+>
+> `ssl_cert_reqs=ssl.CERT_REQUIRED` is what enforces mTLS here. Without it uvicorn defaults to `CERT_NONE` and accepts every caller.
+
+**Pinning TLS 1.3 with uvicorn**: uvicorn exposes `ssl_version`, but it takes an `ssl.PROTOCOL_*` constant and there is no `ssl.PROTOCOL_TLSv1_3` (protocol-specific constants were deprecated in favour of `SSLContext.minimum_version`). uvicorn has no `ssl_minimum_version` argument, so you cannot enforce TLS 1.3 through `uvicorn.run()` alone. Access only needs your server to *support* 1.3, which the default `PROTOCOL_TLS_SERVER` does. If you must enforce 1.3 as a floor, terminate TLS at a reverse proxy (see the Nginx section) or run behind Gunicorn with a custom `SSLContext` where you can set `minimum_version = ssl.TLSVersion.TLSv1_3`.
+
+### Common Pitfalls (All Application-Level)
+
+- **Two stores needed**: You need both a keystore (your server cert + private key) AND a truststore (Access CA for validating client certs). A common mistake is configuring only the keystore.
+- **client-auth=need vs want**: `need` rejects connections without a valid cert. `want` allows connections without a cert but still validates if one is presented. Use `need` for the Access Loyalty Points API.
+- **Port conflicts**: If your app was previously on port 8080 (HTTP), it now needs to be on 8443 (HTTPS) with TLS. Update your load balancer target group and health checks.
+- **Certificate format**: Java uses PKCS12 or JKS keystores. Node.js and Python use PEM files directly. Convert between formats with OpenSSL or `keytool`:
+  ```bash
+  # PEM to PKCS12. -name sets the entry alias; without it OpenSSL writes alias "1",
+  # which will not match `key: alias: server` in the SSL bundle config above.
+  openssl pkcs12 -export -in server.crt -inkey server.key -out keystore.p12 -name server
+
+  # Import CA into truststore. -storepass and -noprompt keep this non-interactive
+  # so it can run in CI; omit them and the command blocks on a prompt.
+  keytool -importcert -alias access-ca -file access-ca.pem \
+    -keystore truststore.p12 -storetype PKCS12 \
+    -storepass "$TRUSTSTORE_PASSWORD" -noprompt
+  ```
+
+---
+
+## Certificate Rotation
+
+Access client certificates expire. Access will provide a replacement certificate before expiration. Plan for rotation:
+
+### Before Rotation
+
+1. **Monitor expiration dates** - track when the Access client certificate and CA certificate expire.
+2. **Obtain the new CA** from your Access Implementation Manager before the old certificate expires.
+3. **Test in sandbox** - update your sandbox trust store with the new CA and verify the mTLS handshake.
+
+### During Rotation
+
+4. **Temporarily trust both old and new CA** - add the new CA to your trust store alongside the old one. This ensures no downtime during the transition.
+5. **Verify production traffic** with the new certificate.
+6. **Remove the old CA** from your trust store after confirming all traffic uses the new certificate.
+
+### Platform-Specific Rotation Notes
+
+| Platform | How to Update Trust Store |
+|----------|--------------------------|
+| AWS ALB | Upload new PEM to S3, then run `aws elbv2 modify-trust-store` to point the trust store at it. Updating the S3 object alone does **not** take effect: the listener references the trust store ARN, and the trust store must be explicitly updated. |
+| AWS API Gateway | Upload new PEM to S3, then update the custom domain name's `truststoreUri` or `truststoreVersion`. This uses S3 object versioning, a different mechanism from the ALB trust store above. |
+| Azure App Gateway | Upload new CA chain to SSL profile, remove old one |
+| GCP Cloud LB | Update Trust Config with new trust anchor |
+| Nginx | Replace `ssl_client_certificate` file, reload Nginx |
+| HAProxy | Replace `ca-file` file, reload HAProxy (or use Runtime API for zero-downtime) |
+| Application-Level | Update truststore file, restart app (or use hot reload if supported) |
+
+---
+
+## Platform Comparison Matrix
+
+| Feature | AWS ALB | AWS NLB | AWS API GW | Azure App GW | GCP Cloud LB | Nginx | HAProxy | App-Level |
+|---------|---------|---------|------------|--------------|--------------|-------|---------|-----------|
+| TLS termination | Yes | No (passthrough) | Yes | Yes | Yes | Yes | Yes | Yes (in app) |
+| Client cert validation | Yes | No (app handles) | Yes | Yes | Yes | Yes | Yes | Yes |
+| Cert revocation (CRL) | Yes | App-dependent | No | No (OCSP only) | No | Yes | Yes | App-dependent |
+| Cert revocation (OCSP) | No | App-dependent | No | Yes | No | Yes (`ssl_ocsp`, 1.19.0+) | No | App-dependent |
+| Pass cert to app via headers | Yes | No (app has cert) | Via Lambda | Yes (rewrite) | Yes (custom headers) | Yes | Yes | N/A (app has cert) |
+| Conditional mTLS (path-based) | No (listener-level) | App-dependent | No | No (listener-level) | No | Yes (lowers vhost posture) | Yes (ACLs) | Yes (app logic) |
+| Trust store update without restart | Yes (S3 update + modify-trust-store) | N/A | Yes (S3 update) | Yes (portal/API) | Yes (gcloud update) | Reload needed | Yes (Runtime API) | Restart needed |
+| **TLS 1.3 support** | Yes | App-dependent | **Yes** | Yes | Yes | Yes | Yes | Yes |
+
+Notes on this matrix:
+
+- **TLS 1.3 is mandatory for this integration** on every platform. See the callout at the top of this guide.
+- **Nginx OCSP** refers to `ssl_ocsp`, which validates the *client* certificate. Do not confuse it with `ssl_stapling`, which is server-side stapling and unrelated to mTLS.
+- **Conditional mTLS on Nginx** works, but the `ssl_verify_client optional` pattern reduces the security posture of the whole server block. Prefer a dedicated vhost.
+- Maximum CA chain depth was removed from this matrix: the previously listed figures were not verified per platform and some appeared to be copied between AWS services. Check your platform's current documentation if you have a deep chain.

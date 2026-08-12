@@ -9,6 +9,7 @@ Ready-to-use AI agent skills that teach coding assistants how to work with Acces
 | Skill | Description |
 |---|---|
 | [access-travel-integration](skills/access-travel-integration/) | Integrate the Access Development Travel Platform — server-side authentication, SDK embedding, deep linking (hotels, cars, theme parks, activities, flights), and event handling. |
+| [loyalty-points-integration](skills/loyalty-points-integration/) | Implement the Access Loyalty Points API — five REST endpoints for balance, holds, redemption, refund, and cancellation. Covers the OpenAPI 3.0 contract, mTLS intake (app vs cloud LB vs reverse proxy), platform recipes, idempotency, hold lifecycle, and testing. |
 
 ## Installation
 
@@ -59,6 +60,9 @@ skills/
     SKILL.md                  # Skill definition (loaded by the agent)
     references/               # Parameter docs, attraction IDs, OpenAPI spec
     scripts/                  # Utilities (e.g. fetch-attractions.sh)
+  loyalty-points-integration/
+    SKILL.md                  # Skill definition (loaded by the agent)
+    references/               # OpenAPI spec, mTLS config guide, endpoint reference, lifecycle rules, testing
 ```
 
 ## License

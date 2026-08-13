@@ -226,7 +226,7 @@ All errors use a standard JSON body:
 }
 ```
 
-The HTTP status depends on the operation, because each operation defines its own set of responses. Use this table, not a single global mapping:
+The HTTP status depends on the operation, because each operation defines its own set of responses. Use this table, not a single global mapping. **404 means the thing this URL asked for does not exist** (the member on `GET /balance`, the hold on `POST /holds/{hold_id}/cancel`). Collection POSTs (`/holds`, `/redemptions`, `/refunds`) do not return 404. Access treats any 4xx as a failed call and does not retry, so a wrong 4xx will not be retried, but you should still return the status the operation declares.
 
 | `error_code` | HTTP Status | Operations | When to use |
 |---|---|---|---|
@@ -251,6 +251,8 @@ All POST endpoints receive an `Idempotency-Key` header from Access. This key is 
 1. Persist the `Idempotency-Key` with the response for every processed request
 2. On receiving a duplicate key, return the original response without re-executing the operation
 3. Use whatever backing store fits your stack (Redis, database table, etc.)
+
+Do **not** turn a retry of the same logical operation into `409 ALREADY_PROCESSED`. Same `Idempotency-Key` means return the cached 200/201 and body. `ALREADY_PROCESSED` is only for a *different* operation against a hold that is already terminal (for example cancel after a successful redeem, or a second redeem with a new key). Access treats any 409 as a failed capture.
 
 This follows the [Stripe idempotency convention](https://docs.stripe.com/api/idempotent_requests). See `references/hold-lifecycle-and-idempotency.md` for implementation patterns.
 
@@ -296,7 +298,7 @@ Access enforces a strict timeout on every call. Your endpoints must answer well 
 |---|---|
 | Connect / read / write timeout | **5 seconds each** |
 | Attempts per logical operation | **3** (1 initial + 2 retries) |
-| Backoff between attempts | 500ms, then 1000ms |
+| Backoff between attempts | 500ms, then 1000ms, then 2000ms |
 | Retried | 5xx responses and connection/IO failures |
 | **Not** retried | **All 4xx responses** |
 | Circuit breaker | Opens after 5 consecutive failed calls, stays open 30 seconds |
@@ -370,7 +372,7 @@ Before production launch, confirm:
 - [ ] Server does not require `program-key` and accepts requests that omit it
 - [ ] Trust store on the validating hop contains the Access CA certificate (complete chain including intermediates)
 - [ ] App does not invent or require an Access-defined trust header
-- [ ] Idempotency key persistence working (duplicate keys return original response)
+- [ ] Idempotency key persistence working (duplicate keys return the original 200/201, not `409 ALREADY_PROCESSED`)
 - [ ] Hold auto-expiration implemented (unredeemed holds released after duration)
 - [ ] Error responses match the spec's `ErrorResponse` schema with correct `error_code` values
 - [ ] `X-Response-Timestamp` header included on all responses
@@ -390,7 +392,7 @@ Before production launch, confirm:
 2. Follow section 3 for all mTLS work: one numbered question per turn, no structured-option tool, no keystore unless Q1 is scenario 1, no invented trust header.
 3. Implement the five endpoints without waiting on Q1. If Q1 is unanswered, emit the Network-team brief from the mTLS guide and continue with business logic.
 4. Load only the matching section of `references/mtls-configuration-guide.md` after Q1.
-5. Do not require `program-key`. Redemptions may arrive with only `hold_id`; resolve the rest from the stored hold.
+5. Do not require `program-key`. Access sends the full RedeemRequest; if a confirmatory field is omitted, resolve it from the stored hold rather than returning 400.
 
 ---
 

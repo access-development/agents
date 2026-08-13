@@ -107,9 +107,10 @@ This follows the [Stripe idempotency convention](https://docs.stripe.com/api/ide
    - The timestamp
 
 2. **On receiving a duplicate key**, return the stored original response:
-   - Same status code
+   - Same status code (200 or 201, not a new 409)
    - Same response body
    - Do not re-execute the operation (do not create a second hold, do not deduct points again)
+   - Do **not** return `409 ALREADY_PROCESSED` for that retry. `ALREADY_PROCESSED` is for a *different* operation against a hold that is already `REDEEMED` or `CANCELLED` (for example cancel after a successful redeem). Access treats any 409 as a failed capture and will auto-void other tenders.
 
 3. **Use a persistent store** - whatever fits your stack:
    - Redis (natural fit; set TTL to 48 hours, not to the hold duration)
@@ -207,9 +208,10 @@ COMMIT;
 4. Access confirms booking with supplier
    Access → POST /v1/loyalty/redemptions
      Idempotency-Key: "redeem-op-001"
-     Body: { hold_id: "h-123", member_key: "abc123", points_to_redeem: 10000, ... }
-     NOTE: some redemptions arrive carrying only { hold_id }. Resolve member_key and
-     the points amount from the stored hold rather than rejecting the request.
+     Body: { hold_id: "h-123", member_key: "abc123", points_to_redeem: 10000,
+             transaction_details: { transaction_id: "txn-98765", type: "HOTEL_BOOKING", ... } }
+     If a confirmatory field is omitted, resolve member_key and the points amount
+     from the stored hold rather than rejecting the request.
      See references/endpoint-contract-reference.md, "Redeem Points".
    ← 200: { status: "SUCCESS", points_redeemed: 10000, new_balance: 240000, ... }
    (Hold h-123 is now REDEEMED, points permanently deducted)

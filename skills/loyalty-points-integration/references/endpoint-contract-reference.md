@@ -214,7 +214,9 @@ Converts an active hold into a permanent point deduction. Called after Access co
 | 409 | `ALREADY_PROCESSED` | Hold has already been redeemed or cancelled |
 | 500 | `ERROR` | Internal server error |
 
-Redemptions define **no 404**. `HOLD_NOT_FOUND` is returned as **409** here, unlike the cancel endpoint where it is 404.
+Redemptions define **no 404**. `hold_id` is in the body, not the URL, so a missing or expired hold is **409** `HOLD_NOT_FOUND`. Cancel uses 404 because the hold is in the path. Access does not retry any 4xx; still return 409 here to match the contract.
+
+Do **not** return `409 ALREADY_PROCESSED` for a retry of the same redeem (`Idempotency-Key` already seen). Return the original 200 and cached body. Use `ALREADY_PROCESSED` only when a *different* operation hits a hold that is already `REDEEMED` or `CANCELLED`.
 
 ### Implementation Notes
 
@@ -223,24 +225,14 @@ Redemptions define **no 404**. `HOLD_NOT_FOUND` is returned as **409** here, unl
 - **Store the transaction_id**: You will need it to match refund requests later.
 - **`supplier_confirmation`** is optional but recommended - it helps with refund reconciliation.
 
-> **Important: do not hard-fail on missing body fields.**
+> **Access sends the full RedeemRequest.** Typical bodies include `hold_id`, `member_key`, `points_to_redeem`, and `transaction_details` (with string `usd_value`).
 >
-> The spec marks `member_key`, `points_to_redeem`, and `transaction_details` as required, but Access does not currently populate them on every redemption. Some requests arrive carrying only `hold_id`:
-
-```json
-{ "hold_id": "hold-12345" }
-```
-
-> If you reject these with 400 `INVALID_REQUEST`, redemptions will fail in production even though your implementation matches the written contract.
->
-> **Resolve what you need from the stored hold instead.** You created the hold, so you already hold the authoritative `member_key` and points amount. Treat the body fields as confirmatory when present and as absent-but-recoverable when not:
+> Still treat extra body fields as confirmatory, not as the only source of truth:
 >
 > 1. Look up the hold by `hold_id`. If it does not exist, that is a genuine `HOLD_NOT_FOUND`.
-> 2. Take `member_key` and the points amount from the hold record.
+> 2. Take `member_key` and the points amount from the hold record when a request field is omitted.
 > 3. If the request *does* carry `member_key` or `points_to_redeem`, cross-check them against the hold and reject on mismatch. A mismatch is a real error; an omission is not.
-> 4. Treat `transaction_details` as optional metadata. Persist it when present. If absent, generate your own internal transaction identifier and return it as `transaction_id`, since Access uses that value as `original_transaction_id` on any later refund.
->
-> This is tracked as a defect against the Access caller. Build defensively until it is resolved.
+> 4. Persist `transaction_details` when present. Echo `transaction_details.transaction_id` as `transaction_id` on the redeem response. Access uses that value as `original_transaction_id` on a later refund. If `transaction_details` is absent, generate an internal transaction identifier and return it.
 
 ---
 
@@ -435,7 +427,7 @@ All error responses use this shape:
 
 ### Error Codes
 
-The HTTP status is per-operation, because each operation declares its own response set. There is no single global mapping.
+The HTTP status is per-operation, because each operation declares its own response set. There is no single global mapping. **404 means the thing this URL asked for does not exist.** Collection POSTs do not return 404.
 
 | Code | HTTP Status | Valid on | Description |
 |------|-------------|----------|-------------|

@@ -404,7 +404,7 @@ Or better: deduct points from `available_points` at hold time and restore on can
 - [ ] All responses include `X-Response-Timestamp` header
 - [ ] **p99 response time is under 5 seconds** on all five endpoints. Access times out at 5s per attempt.
 - [ ] Transient internal failures return 5xx, not 4xx. Access never retries a 4xx.
-- [ ] Redemptions succeed when the request body carries only `hold_id` (resolve the rest from the stored hold)
+- [ ] Redemptions accept the full RedeemRequest body. If a confirmatory field is omitted, resolve it from the stored hold rather than returning 400
 
 ### Data Format
 
@@ -415,7 +415,7 @@ Or better: deduct points from `available_points` at hold time and restore on can
 
 ### Business Logic
 
-- [ ] Idempotency key persistence works (duplicate keys return original response)
+- [ ] Idempotency key persistence works (duplicate keys return the original 200/201, not `409 ALREADY_PROCESSED`)
 - [ ] Idempotency records are retained for at least 48 hours
 - [ ] Hold auto-expiration implemented and tested
 - [ ] Cancel restores held points

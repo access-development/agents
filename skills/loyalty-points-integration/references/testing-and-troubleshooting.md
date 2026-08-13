@@ -415,7 +415,7 @@ Or better: deduct points from `available_points` at hold time and restore on can
 
 ### Business Logic
 
-- [ ] Idempotency key persistence works (duplicate keys return original response)
+- [ ] Idempotency key persistence works (duplicate keys return the original 200/201, not `409 ALREADY_PROCESSED`)
 - [ ] Idempotency records are retained for at least 48 hours
 - [ ] Hold auto-expiration implemented and tested
 - [ ] Cancel restores held points

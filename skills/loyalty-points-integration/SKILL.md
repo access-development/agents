@@ -226,7 +226,7 @@ All errors use a standard JSON body:
 }
 ```
 
-The HTTP status depends on the operation, because each operation defines its own set of responses. Use this table, not a single global mapping. Access treats any 4xx as a failed call and does not retry, so a wrong 4xx (for example 404 on redeem) will not be retried, but you should still return the status the operation declares so your implementation matches the contract.
+The HTTP status depends on the operation, because each operation defines its own set of responses. Use this table, not a single global mapping. **404 means the thing this URL asked for does not exist** (the member on `GET /balance`, the hold on `POST /holds/{hold_id}/cancel`). Collection POSTs (`/holds`, `/redemptions`, `/refunds`) do not return 404. Access treats any 4xx as a failed call and does not retry, so a wrong 4xx will not be retried, but you should still return the status the operation declares.
 
 | `error_code` | HTTP Status | Operations | When to use |
 |---|---|---|---|
@@ -251,6 +251,8 @@ All POST endpoints receive an `Idempotency-Key` header from Access. This key is 
 1. Persist the `Idempotency-Key` with the response for every processed request
 2. On receiving a duplicate key, return the original response without re-executing the operation
 3. Use whatever backing store fits your stack (Redis, database table, etc.)
+
+Do **not** turn a retry of the same logical operation into `409 ALREADY_PROCESSED`. Same `Idempotency-Key` means return the cached 200/201 and body. `ALREADY_PROCESSED` is only for a *different* operation against a hold that is already terminal (for example cancel after a successful redeem, or a second redeem with a new key). Access treats any 409 as a failed capture.
 
 This follows the [Stripe idempotency convention](https://docs.stripe.com/api/idempotent_requests). See `references/hold-lifecycle-and-idempotency.md` for implementation patterns.
 
@@ -370,7 +372,7 @@ Before production launch, confirm:
 - [ ] Server does not require `program-key` and accepts requests that omit it
 - [ ] Trust store on the validating hop contains the Access CA certificate (complete chain including intermediates)
 - [ ] App does not invent or require an Access-defined trust header
-- [ ] Idempotency key persistence working (duplicate keys return original response)
+- [ ] Idempotency key persistence working (duplicate keys return the original 200/201, not `409 ALREADY_PROCESSED`)
 - [ ] Hold auto-expiration implemented (unredeemed holds released after duration)
 - [ ] Error responses match the spec's `ErrorResponse` schema with correct `error_code` values
 - [ ] `X-Response-Timestamp` header included on all responses

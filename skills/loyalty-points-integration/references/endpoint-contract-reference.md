@@ -214,7 +214,9 @@ Converts an active hold into a permanent point deduction. Called after Access co
 | 409 | `ALREADY_PROCESSED` | Hold has already been redeemed or cancelled |
 | 500 | `ERROR` | Internal server error |
 
-Redemptions define **no 404**. `HOLD_NOT_FOUND` is returned as **409** here, unlike the cancel endpoint where it is 404. Access does not retry any 4xx, so a 404 on redeem will fail the capture rather than being retried. Return 409 to match the contract.
+Redemptions define **no 404**. `hold_id` is in the body, not the URL, so a missing or expired hold is **409** `HOLD_NOT_FOUND`. Cancel uses 404 because the hold is in the path. Access does not retry any 4xx; still return 409 here to match the contract.
+
+Do **not** return `409 ALREADY_PROCESSED` for a retry of the same redeem (`Idempotency-Key` already seen). Return the original 200 and cached body. Use `ALREADY_PROCESSED` only when a *different* operation hits a hold that is already `REDEEMED` or `CANCELLED`.
 
 ### Implementation Notes
 
@@ -425,7 +427,7 @@ All error responses use this shape:
 
 ### Error Codes
 
-The HTTP status is per-operation, because each operation declares its own response set. There is no single global mapping.
+The HTTP status is per-operation, because each operation declares its own response set. There is no single global mapping. **404 means the thing this URL asked for does not exist.** Collection POSTs do not return 404.
 
 | Code | HTTP Status | Valid on | Description |
 |------|-------------|----------|-------------|

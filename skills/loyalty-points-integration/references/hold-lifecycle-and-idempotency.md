@@ -107,9 +107,10 @@ This follows the [Stripe idempotency convention](https://docs.stripe.com/api/ide
    - The timestamp
 
 2. **On receiving a duplicate key**, return the stored original response:
-   - Same status code
+   - Same status code (200 or 201, not a new 409)
    - Same response body
    - Do not re-execute the operation (do not create a second hold, do not deduct points again)
+   - Do **not** return `409 ALREADY_PROCESSED` for that retry. `ALREADY_PROCESSED` is for a *different* operation against a hold that is already `REDEEMED` or `CANCELLED` (for example cancel after a successful redeem). Access treats any 409 as a failed capture and will auto-void other tenders.
 
 3. **Use a persistent store** - whatever fits your stack:
    - Redis (natural fit; set TTL to 48 hours, not to the hold duration)

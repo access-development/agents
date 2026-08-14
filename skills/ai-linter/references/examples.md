@@ -20,7 +20,9 @@ Install with the `skills` CLI:
 npx skills add access-development/agents
 ```
 
-The parenthetical exists because a writing session discussed a wrong command. A first-draft README would just show the command. If `install` is a real, recurring trap for this audience, put it in a troubleshooting section as a current fact, not as an inline aside next to the happy path.
+The parenthetical is the pass-1 cut. Shortening "The easiest way to install is with" to "Install with" is optional throat-clearing, not required for the lesson.
+
+If `install` is a real, recurring trap for this audience, put it in a troubleshooting section as a current fact, not as an inline aside next to the happy path.
 
 ## 2. Changelog sentence in a how-to
 
@@ -68,7 +70,19 @@ Nobody reading the finished install section is holding `settings.json` unless th
 
 > The API key must not go in the browser. Proxy token creation through your backend.
 
-## 6. Ghost text after a cut
+## 6. Context carry-over
+
+**Before** (in a public partner README)
+
+> As discussed, your earlier point about `settings.json` is right. Copy the skill folder into `.claude/skills/`.
+
+**After**
+
+> Copy the skill folder into `.claude/skills/`.
+
+The first sentence answers the author, not a partner reading the repo.
+
+## 7. Ghost text after a cut
 
 **Before**
 
@@ -80,7 +94,7 @@ Nobody reading the finished install section is holding `settings.json` unless th
 
 > Authenticate with a bearer token.
 
-## 7. Leave it alone
+## 8. Leave it alone
 
 **Not residue**
 

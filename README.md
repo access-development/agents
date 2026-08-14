@@ -66,6 +66,7 @@ Common paths for other agents:
 | Claude Code | `.claude/skills/` | `~/.claude/skills/` |
 | Cursor | `.agents/skills/` | `~/.cursor/skills/` |
 | GitHub Copilot | `.agents/skills/` | `~/.copilot/skills/` |
+| Grok Build | `.grok/skills/` | `~/.grok/skills/` |
 | Windsurf | `.windsurf/skills/` | `~/.codeium/windsurf/skills/` |
 
 Then ask your agent to help with travel platform or loyalty points integration. It will pick up the matching skill.

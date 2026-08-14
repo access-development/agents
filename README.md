@@ -13,7 +13,7 @@ Ready-to-use AI agent skills that teach coding assistants how to work with Acces
 
 ## Installation
 
-The easiest way to install is with the `skills` CLI:
+The easiest way to install is with the `skills` CLI. The command is `add` (there is no `npx skills install`):
 
 ```bash
 npx skills add access-development/agents
@@ -38,19 +38,37 @@ npx skills add access-development/agents --skill '*' --agent cursor
 npx skills add access-development/agents --all --global
 ```
 
-### Manual setup (Claude Code)
+### Manual setup
 
-If you prefer not to use the CLI, add the skill directly to your project's `.claude/settings.json`:
+If you prefer not to use the CLI, copy each skill **folder** (the directory that contains `SKILL.md` plus any `references/` or `scripts/`) into the agent's skills directory. Agents discover skills as folders, not as paths listed in `.claude/settings.json`.
 
-```json
-{
-  "skills": [
-    "/path/to/agents/skills/access-travel-integration/SKILL.md"
-  ]
-}
+Claude Code, project-level:
+
+```bash
+git clone https://github.com/access-development/agents.git
+mkdir -p .claude/skills
+cp -R agents/skills/access-travel-integration .claude/skills/
+cp -R agents/skills/loyalty-points-integration .claude/skills/
 ```
 
-Then ask your agent to help with travel platform integration — it will automatically use the skill.
+Claude Code, user-level (all projects):
+
+```bash
+mkdir -p ~/.claude/skills
+cp -R agents/skills/access-travel-integration ~/.claude/skills/
+cp -R agents/skills/loyalty-points-integration ~/.claude/skills/
+```
+
+Common paths for other agents:
+
+| Agent | Project | Global |
+|---|---|---|
+| Claude Code | `.claude/skills/` | `~/.claude/skills/` |
+| Cursor | `.agents/skills/` | `~/.cursor/skills/` |
+| GitHub Copilot | `.agents/skills/` | `~/.copilot/skills/` |
+| Windsurf | `.windsurf/skills/` | `~/.codeium/windsurf/skills/` |
+
+Then ask your agent to help with travel platform or loyalty points integration. It will pick up the matching skill.
 
 ## Repository Structure
 

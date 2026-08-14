@@ -13,7 +13,7 @@ Ready-to-use AI agent skills that teach coding assistants how to work with Acces
 
 ## Installation
 
-The easiest way to install is with the `skills` CLI. The command is `add` (there is no `npx skills install`):
+Install with the `skills` CLI:
 
 ```bash
 npx skills add access-development/agents
@@ -40,7 +40,7 @@ npx skills add access-development/agents --all --global
 
 ### Manual setup
 
-If you prefer not to use the CLI, copy each skill **folder** (the directory that contains `SKILL.md` plus any `references/` or `scripts/`) into the agent's skills directory. Agents discover skills as folders, not as paths listed in `.claude/settings.json`.
+If you prefer not to use the CLI, copy each skill folder (the directory that contains `SKILL.md` plus any `references/` or `scripts/`) into the agent's skills directory.
 
 Claude Code, project-level:
 

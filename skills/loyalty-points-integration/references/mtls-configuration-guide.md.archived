@@ -1,4 +1,12 @@
-# mTLS Configuration Guide
+# ARCHIVED — mTLS Configuration Guide (superseded by HMAC-SHA256)
+
+> **Archived 2026-08-21.** This document is retained for historical reference only. The Access Loyalty Points API V1 contract authenticates with HMAC-SHA256 request signing, **not mTLS**. See `references/hmac-signing-spec.md` (a copy of `burn-specifications/hmac-sha256-request-signing.md`, the source of truth). Access does **not** present a client certificate; the application must verify the HMAC signature in `X-Access-Signature` against a per-program secret.
+>
+> Per the spec, do not configure mTLS on the load balancer, API gateway, or application for V1. Do not run the intake, network-team brief, or platform recipes below — they describe a contract that has been replaced.
+
+---
+
+# mTLS Configuration Guide (historical draft, not V1)
 
 This guide is the follow-through after the intake in `SKILL.md` section 3. Load **one** platform section, the one that matches who validates the Access client certificate. Do not start from this file.
 

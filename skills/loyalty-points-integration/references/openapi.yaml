@@ -885,7 +885,7 @@ components:
               description: Access-generated transaction correlation ID.
             type:
               type: string
-              enum: [HOTEL_BOOKING, THEME_PARK_BOOKING, ATTRACTION_BOOKING, CAR_BOOKING, ACTIVITY_BOOKING, OTHER_BOOKING]
+              enum: [HOTEL_BOOKING, THEME_PARK_BOOKING, ATTRACTION_BOOKING]
               description: Type of transaction.
             description:
               type: string

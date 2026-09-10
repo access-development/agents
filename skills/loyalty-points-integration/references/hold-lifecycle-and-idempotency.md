@@ -55,7 +55,9 @@ This document covers the business rules for the hold/redeem/refund lifecycle and
    - **Cancel** (`POST /holds/{id}/cancel`): The hold was only reserved, never redeemed. Points are restored. No billing impact. No revenue share reversal.
    - **Refund** (`POST /refunds`): The hold was already redeemed (points permanently deducted). Points are credited back. This reverses the billing and revenue share for the original transaction.
 
-5. **Atomicity**: Use database transactions for hold creation and redemption to prevent double-spending under concurrent requests. A hold request should atomically: (a) check available balance, (b) deduct points, (c) create hold record. If any step fails, roll back.
+5. **Atomicity**: Use database transactions for hold creation and redemption to prevent double-spending under concurrent requests.
+   - **Hold:** atomically (a) check available balance, (b) deduct points, (c) create the hold record. If any step fails, roll back.
+   - **Redeem:** in one database transaction, unique-insert Access's `transaction_id` and mark the hold `REDEEMED`. A unique-constraint violation is 409 `ALREADY_PROCESSED`; the hold stays `ACTIVE`. Do not persist a redemption row and leave the hold `ACTIVE` as two independent writes. Refund looks up that id. Cancel and expiry restore points only for `ACTIVE` holds.
 
 6. **Already redeemed holds cannot be cancelled**: If Access calls cancel on a redeemed hold, return `ALREADY_PROCESSED`. The correct way to reverse a redemption is a refund.
 
@@ -175,6 +177,17 @@ INSERT INTO holds (idempotency_key, ...) VALUES (?, ...);
 COMMIT;
 ```
 
+Redeem uses the same idea: unique `transaction_id` on the redemption row, hold status flip in the same transaction.
+
+```sql
+BEGIN;
+INSERT INTO redemptions (transaction_id, hold_id, ...) VALUES (?, ?);
+-- unique on transaction_id: violation is 409 ALREADY_PROCESSED, roll back
+UPDATE holds SET status = 'REDEEMED' WHERE hold_id = ? AND status = 'ACTIVE';
+-- 0 rows updated: hold is not ACTIVE; roll back and return HOLD_NOT_FOUND or ALREADY_PROCESSED
+COMMIT;
+```
+
 ### Edge Cases
 
 - **Key collision across endpoints**: The same `Idempotency-Key` should not be reused across different operations (Access guarantees this). However, defensively, you can scope your idempotency store by endpoint: `idempotency:holds:{key}` vs `idempotency:refunds:{key}`.
@@ -210,8 +223,11 @@ COMMIT;
      Idempotency-Key: "redeem-op-001"
      Body: { hold_id: "h-123", member_key: "abc123", points_to_redeem: 10000,
              transaction_details: { transaction_id: "txn-98765", type: "HOTEL_BOOKING", ... } }
-     If a confirmatory field is omitted, resolve member_key and the points amount
-     from the stored hold rather than rejecting the request.
+     If member_key or points_to_redeem is omitted, resolve it from the stored
+     hold rather than rejecting the request. Those are the only confirmatory
+     fields. transaction_details is required; persist it and echo
+     transaction_details.transaction_id. Never invent a transaction_id; Access
+     refunds with the id it sent.
      See references/endpoint-contract-reference.md, "Redeem Points".
    ← 200: { status: "SUCCESS", points_redeemed: 10000, new_balance: 240000, ... }
    (Hold h-123 is now REDEEMED, points permanently deducted)

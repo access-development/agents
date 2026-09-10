@@ -444,7 +444,9 @@ Or better: deduct points from `available_points` at hold time and restore on can
 - [ ] All responses include `X-Response-Timestamp` header
 - [ ] **p99 response time is under 5 seconds** on all five endpoints. Access times out at 5s per attempt.
 - [ ] Transient internal failures return 5xx, not 4xx. Access never retries a 4xx.
-- [ ] Redemptions accept the full RedeemRequest body. If a confirmatory field is omitted, resolve it from the stored hold rather than returning 400
+- [ ] On redeem, the confirmatory omit/mismatch rule applies only to `member_key` and `points_to_redeem`. If either is omitted, resolve it from the stored hold rather than returning 400
+- [ ] Redeem requires `transaction_details` and `transaction_details.transaction_id`. Missing either is 400 `INVALID_REQUEST`. Do not invent a `transaction_id`
+- [ ] Redeem response `transaction_id` echoes `transaction_details.transaction_id` from the request. Access refunds with the id it sent
 
 ### Data Format
 
@@ -464,6 +466,7 @@ Or better: deduct points from `available_points` at hold time and restore on can
 - [ ] Cannot redeem an expired or cancelled hold
 - [ ] Cannot cancel an already redeemed hold
 - [ ] Concurrent hold requests on the same member do not cause double-spending
+- [ ] Redeem unique-inserts Access's `transaction_id` and marks the hold `REDEEMED` in one database transaction
 
 ### Integration
 

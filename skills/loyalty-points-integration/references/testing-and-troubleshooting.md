@@ -466,6 +466,7 @@ Or better: deduct points from `available_points` at hold time and restore on can
 - [ ] Cannot redeem an expired or cancelled hold
 - [ ] Cannot cancel an already redeemed hold
 - [ ] Concurrent hold requests on the same member do not cause double-spending
+- [ ] Redeem unique-inserts Access's `transaction_id` and marks the hold `REDEEMED` in one database transaction
 
 ### Integration
 

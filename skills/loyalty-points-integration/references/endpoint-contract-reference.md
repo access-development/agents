@@ -249,8 +249,7 @@ Do **not** return `409 ALREADY_PROCESSED` for a retry of the same redeem (`Idemp
 ### Implementation Notes
 
 - **Verify the hold is ACTIVE** before deducting. If the hold has expired or been cancelled, return `HOLD_NOT_FOUND` or `ALREADY_PROCESSED`.
-- **Atomic deduction**: Deduct points and update ledger in a single transaction.
-- **Store the transaction_id**: You will need it to match refund requests later.
+- **One database transaction**: unique-insert Access's `transaction_id` and mark the hold `REDEEMED`. Refunds look up that id. A unique-constraint violation is 409 `ALREADY_PROCESSED`; the hold stays `ACTIVE`.
 - **`supplier_confirmation`** is optional but recommended - it helps with refund reconciliation.
 
 > **Access sends the full RedeemRequest.** Bodies include `hold_id`, `member_key`, `points_to_redeem`, and `transaction_details` (with string `usd_value`).

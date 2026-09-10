@@ -55,7 +55,9 @@ This document covers the business rules for the hold/redeem/refund lifecycle and
    - **Cancel** (`POST /holds/{id}/cancel`): The hold was only reserved, never redeemed. Points are restored. No billing impact. No revenue share reversal.
    - **Refund** (`POST /refunds`): The hold was already redeemed (points permanently deducted). Points are credited back. This reverses the billing and revenue share for the original transaction.
 
-5. **Atomicity**: Use database transactions for hold creation and redemption to prevent double-spending under concurrent requests. A hold request should atomically: (a) check available balance, (b) deduct points, (c) create hold record. If any step fails, roll back.
+5. **Atomicity**: Use database transactions for hold creation and redemption to prevent double-spending under concurrent requests.
+   - **Hold:** atomically (a) check available balance, (b) deduct points, (c) create the hold record. If any step fails, roll back.
+   - **Redeem:** in one database transaction, unique-insert Access's `transaction_id` and mark the hold `REDEEMED`. A unique-constraint violation is 409 `ALREADY_PROCESSED`; the hold stays `ACTIVE`. Do not persist a redemption row and leave the hold `ACTIVE` as two independent writes. Refund looks up that id. Cancel and expiry restore points only for `ACTIVE` holds.
 
 6. **Already redeemed holds cannot be cancelled**: If Access calls cancel on a redeemed hold, return `ALREADY_PROCESSED`. The correct way to reverse a redemption is a refund.
 
@@ -172,6 +174,17 @@ BEGIN;
 INSERT INTO holds (idempotency_key, ...) VALUES (?, ...);
 -- If unique constraint violation, SELECT existing hold and return it.
 -- Otherwise, proceed with balance check and point reservation.
+COMMIT;
+```
+
+Redeem uses the same idea: unique `transaction_id` on the redemption row, hold status flip in the same transaction.
+
+```sql
+BEGIN;
+INSERT INTO redemptions (transaction_id, hold_id, ...) VALUES (?, ?);
+-- unique on transaction_id: violation is 409 ALREADY_PROCESSED, roll back
+UPDATE holds SET status = 'REDEEMED' WHERE hold_id = ? AND status = 'ACTIVE';
+-- 0 rows updated: hold is not ACTIVE; roll back and return HOLD_NOT_FOUND or ALREADY_PROCESSED
 COMMIT;
 ```
 

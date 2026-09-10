@@ -416,7 +416,7 @@ Before production launch, confirm:
 2. Whenever the developer asks about **mTLS**, **client certificate**, **TLS 1.3-only**, or **certificate rotation for the Access integration**, do **not** generate mTLS code or a network-team brief - V1 uses HMAC-SHA256 signing. , no client certificate. Point at `references/hmac-signing-spec.md` and Journey B / section 3.
 3. Implement the five endpoints without waiting on the verifier. If HMAC work is partial, keep going on business logic and return to verifier implementation when ready.
 4. Before claiming goto-live readiness, verify the **spec vectors 1–3** in the developer's verifier implementation. Different v1 results = canonical-string bug, fix before going further.
-5. Do not require `program-key`. Access sends the full RedeemRequest; if a confirmatory field is omitted, resolve it from the stored hold rather than returning 400.
+5. Do not require `program-key`. On redeem, the confirmatory omit/mismatch rule applies only to `member_key` and `points_to_redeem` (those live on the hold). `transaction_details` is required; persist it and echo `transaction_details.transaction_id`. If the object or the id is missing, return 400 `INVALID_REQUEST`. Never invent a `transaction_id`; Access refunds with the id it sent.
 
 ---
 

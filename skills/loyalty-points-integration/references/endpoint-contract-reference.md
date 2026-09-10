@@ -253,14 +253,14 @@ Do **not** return `409 ALREADY_PROCESSED` for a retry of the same redeem (`Idemp
 - **Store the transaction_id**: You will need it to match refund requests later.
 - **`supplier_confirmation`** is optional but recommended - it helps with refund reconciliation.
 
-> **Access sends the full RedeemRequest.** Typical bodies include `hold_id`, `member_key`, `points_to_redeem`, and `transaction_details` (with string `usd_value`).
+> **Access sends the full RedeemRequest.** Bodies include `hold_id`, `member_key`, `points_to_redeem`, and `transaction_details` (with string `usd_value`).
 >
-> Still treat extra body fields as confirmatory, not as the only source of truth:
+> `member_key` and `points_to_redeem` are the only confirmatory fields. They live on the hold:
 >
 > 1. Look up the hold by `hold_id`. If it does not exist, that is a genuine `HOLD_NOT_FOUND`.
 > 2. Take `member_key` and the points amount from the hold record when a request field is omitted.
-> 3. If the request *does* carry `member_key` or `points_to_redeem`, cross-check them against the hold and reject on mismatch. A mismatch is a real error; an omission is not.
-> 4. Persist `transaction_details` when present. Echo `transaction_details.transaction_id` as `transaction_id` on the redeem response. Access uses that value as `original_transaction_id` on a later refund. If `transaction_details` is absent, generate an internal transaction identifier and return it.
+> 3. If the request does carry `member_key` or `points_to_redeem`, cross-check them against the hold and reject on mismatch. A mismatch is a real error; an omission is not.
+> 4. Persist `transaction_details`. Echo `transaction_details.transaction_id` as `transaction_id` on the redeem response. If `transaction_details` or `transaction_details.transaction_id` is missing, return 400 `INVALID_REQUEST`. Never invent a `transaction_id`; Access refunds with the id it sent.
 
 ---
 

@@ -9,7 +9,7 @@ Ready-to-use AI agent skills that teach coding assistants how to work with Acces
 | Skill | Description |
 |---|---|
 | [access-travel-integration](skills/access-travel-integration/) | Integrate the Access Development Travel Platform — server-side authentication, SDK embedding, deep linking (hotels, cars, theme parks, activities, flights), and event handling. |
-| [loyalty-points-integration](skills/loyalty-points-integration/) | Implement the Access Loyalty Points API — five REST endpoints for balance, holds, redemption, refund, and cancellation. Covers the OpenAPI 3.0 contract, mTLS intake (app vs cloud LB vs reverse proxy), platform recipes, idempotency, hold lifecycle, and testing. |
+| [loyalty-points-integration](skills/loyalty-points-integration/) | Implement the Access Loyalty Points API — five REST endpoints for balance, holds, redemption, refund, and cancellation. Covers the OpenAPI 3.0 contract, HMAC-SHA256 request signing, idempotency, hold lifecycle, and testing. |
 
 ## Installation
 
@@ -71,6 +71,25 @@ Common paths for other agents:
 
 Then ask your agent to help with travel platform or loyalty points integration. It will pick up the matching skill.
 
+## Versions
+
+`npx skills add access-development/agents` installs current `master`. That is always the latest published skill text.
+
+To pin a released version:
+
+```bash
+npx skills add access-development/agents#v2.0.0
+npx skills add access-development/agents#v2.0.0@loyalty-points-integration
+```
+
+`#vX.Y.Z` is a git tag. `@skill-name` selects one skill from the repo.
+
+`npx skills update` checks `master`, not the tag you pinned. To stay on a named version, reinstall with the tag and do not run `skills update` for these skills.
+
+Notable changes are in [CHANGELOG.md](CHANGELOG.md). GitHub Releases: https://github.com/access-development/agents/releases. Watch the repo and choose Releases only if you want a notification when we cut a version.
+
+Versioning follows [SemVer](https://semver.org/): patch for wording and examples, minor for additive guidance, major when the integration contract changes.
+
 ## Repository Structure
 
 ```
@@ -81,7 +100,7 @@ skills/
     scripts/                  # Utilities (e.g. fetch-attractions.sh)
   loyalty-points-integration/
     SKILL.md                  # Skill definition (loaded by the agent)
-    references/               # OpenAPI spec, mTLS config guide, endpoint reference, lifecycle rules, testing
+    references/               # OpenAPI spec, HMAC signing spec, endpoint reference, lifecycle rules, testing
 ```
 
 ## License

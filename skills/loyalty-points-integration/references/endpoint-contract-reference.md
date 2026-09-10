@@ -203,7 +203,7 @@ Converts an active hold into a permanent point deduction. Called after Access co
 | `points_to_redeem` | integer | Yes | Points to deduct. Min: 1, Max: 1000000 |
 | `transaction_details` | object | Yes | Transaction metadata |
 | `transaction_details.transaction_id` | string | Yes | Access-generated transaction correlation ID |
-| `transaction_details.type` | string (enum) | Yes | `HOTEL_BOOKING`, `THEME_PARK_BOOKING`, or `ATTRACTION_BOOKING` |
+| `transaction_details.type` | string (enum) | Yes | `HOTEL_BOOKING`, `THEME_PARK_BOOKING`, `ATTRACTION_BOOKING`, `CAR_BOOKING`, `ACTIVITY_BOOKING`, or `OTHER_BOOKING` |
 | `transaction_details.description` | string | Yes | Human-readable description. Max: 255 chars |
 | `transaction_details.supplier_confirmation` | string | No | Supplier booking confirmation (recommended for refund reconciliation) |
 | `transaction_details.usd_value` | string | Yes | USD value of points redeemed. Pattern: `^\d+\.\d{2}$` |
@@ -487,5 +487,8 @@ Responses declared per operation, for reference:
 | Value | Description |
 |-------|-------------|
 | `HOTEL_BOOKING` | Hotel reservation |
-| `THEME_PARK_BOOKING` | Theme park booking |
+| `THEME_PARK_BOOKING` | Theme park booking (e.g., Disney, Universal, SeaWorld) |
 | `ATTRACTION_BOOKING` | Attraction booking |
+| `CAR_BOOKING` | Car rental booking |
+| `ACTIVITY_BOOKING` | Activity booking |
+| `OTHER_BOOKING` | Fallback when the product family is unrecognized |

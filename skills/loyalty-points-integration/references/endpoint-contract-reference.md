@@ -236,7 +236,7 @@ Converts an active hold into a permanent point deduction. Called after Access co
 
 | Status | `error_code` | When |
 |--------|--------------|------|
-| 400 | `INVALID_REQUEST` | Invalid `hold_id` format, or body fields that contradict the stored hold |
+| 400 | `INVALID_REQUEST` | Invalid `hold_id` format, missing `transaction_details` / `transaction_id`, or body fields that contradict the stored hold |
 | 401 | `AUTHENTICATION_FAILED` | HMAC verification failed |
 | 409 | `HOLD_NOT_FOUND` | Hold does not exist or has expired |
 | 409 | `ALREADY_PROCESSED` | Hold has already been redeemed or cancelled |

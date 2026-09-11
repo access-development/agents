@@ -885,8 +885,11 @@ components:
               description: Access-generated transaction correlation ID.
             type:
               type: string
-              enum: [HOTEL_BOOKING, THEME_PARK_BOOKING, ATTRACTION_BOOKING]
-              description: Type of transaction.
+              enum: [HOTEL_BOOKING, THEME_PARK_BOOKING, ATTRACTION_BOOKING, ACTIVITY_BOOKING, CAR_BOOKING, GIFT_CARD_BOOKING, OTHER_BOOKING]
+              description: |
+                Type of transaction. OTHER_BOOKING is the fallback for a missing
+                or unrecognized product family — servers must accept it and must
+                not reject the redemption because of it.
             description:
               type: string
               maxLength: 255
